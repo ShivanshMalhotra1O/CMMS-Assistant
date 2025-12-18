@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>CMMS AI Chat</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f4f6f8;
+      display: flex;
+      justify-content: center;
+      padding-top: 40px;
+    }
+    .chat-container {
+      width: 420px;
+      background: white;
+      border-radius: 6px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      display: flex;
+      flex-direction: column;
+    }
+    .messages {
+      padding: 16px;
+      height: 400px;
+      overflow-y: auto;
+      border-bottom: 1px solid #ddd;
+    }
+    .message {
+      margin-bottom: 12px;
+    }
+    .user {
+      font-weight: bold;
+    }
+    .bot {
+      color: #333;
+    }
+    .input-area {
+      display: flex;
+      padding: 12px;
+    }
+    input {
+      flex: 1;
+      padding: 8px;
+    }
+    button {
+      margin-left: 8px;
+      padding: 8px 12px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="chat-container">
+  <div class="messages" id="messages"></div>
+  <div class="input-area">
+    <input id="input" placeholder="Type a message..." />
+    <button onclick="send()">Send</button>
+  </div>
+</div>
+
+<script>
+  async function send() {
+    const input = document.getElementById("input");
+    const messages = document.getElementById("messages");
+    const text = input.value.trim();
+    if (!text) return;
+
+    messages.innerHTML += `<div class="message user">You: ${text}</div>`;
+    input.value = "";
+
+    const response = await fetch("/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: text })
+    });
+
+    const data = await response.json();
+    messages.innerHTML += `<div class="message bot">AI: ${data.response}</div>`;
+    messages.scrollTop = messages.scrollHeight;
+  }
+</script>
+
+</body>
+</html>
