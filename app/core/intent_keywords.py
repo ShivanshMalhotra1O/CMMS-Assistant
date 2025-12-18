@@ -9,6 +9,7 @@ Task_Keywords = {
 
     # CMMS domain nouns
     "maintenance": 0.75,
+    "status": 0.75,
     "repair": 0.75,
     "service": 0.7,
     "task": 0.6,
@@ -38,6 +39,7 @@ Task_Keywords = {
 Analyze_Keywords = {
     # Core analysis actions
     "analyze": 0.65,
+    "analyse":0.65,
     "analysis": 0.65,
     "strategies": 0.7,
     "reports": 0.7,

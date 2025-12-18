@@ -9,8 +9,17 @@ from pathlib import Path
 from app.core.logging import logger
 from app.core.memory import chat_history
 from app.models.models_list import get_model
+from app.core.llm_warmup import warmup_llm
+from contextlib import asynccontextmanager
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    warmup_llm()
+    yield
+    # Shutdown (optional cleanup later)
+
+app = FastAPI(lifespan=lifespan)
 
 # Frontend
 BASE_DIR = Path(__file__).resolve().parent
@@ -31,7 +40,7 @@ app.mount(
 # Local Hostes
 model = get_model(
     provider="local_host",
-    model_name="gpt-oss:latest"
+    model_name="qwen2.5:7b"
 )
 
 chatbot = ChatbotAgent(model)
@@ -49,6 +58,7 @@ def root():
 def health():
     return {"status": "ok"}
 
+
 # Route to chat with the chatbot
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
@@ -65,6 +75,7 @@ def chat(request: ChatRequest):
         return {"response": response}
     
     if intent == Intent.EXECUTE_TASK:
+      
         return{"response": "It has not been implemented yet, still working on it"}
     
     if intent == Intent.ANALYZE:

@@ -5,56 +5,143 @@
   <title>CMMS AI Chat</title>
   <style>
     body {
-      font-family: Arial, sans-serif;
+      font-family: Inter, Arial, sans-serif;
       background: #f4f6f8;
       display: flex;
       justify-content: center;
+      align-items: flex-start;
       padding-top: 40px;
     }
+
     .chat-container {
       width: 420px;
-      background: white;
-      border-radius: 6px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      background: #ffffff;
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.08);
       display: flex;
       flex-direction: column;
+      overflow: hidden;
     }
+
+    /* Header */
+    .header {
+      padding: 16px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    .header-title {
+      font-weight: 600;
+      font-size: 16px;
+    }
+
+    .header-subtitle {
+      font-size: 13px;
+      color: #6b7280;
+      margin-top: 2px;
+    }
+
+    /* Messages */
     .messages {
       padding: 16px;
-      height: 400px;
+      height: 420px;
       overflow-y: auto;
-      border-bottom: 1px solid #ddd;
+      background: #f9fafb;
     }
+
     .message {
-      margin-bottom: 12px;
+      margin-bottom: 14px;
+      max-width: 85%;
+      line-height: 1.4;
+      font-size: 14px;
     }
-    .user {
-      font-weight: bold;
-    }
+
     .bot {
-      color: #333;
+      background: #ffffff;
+      padding: 12px;
+      border-radius: 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     }
+
+    .user {
+      margin-left: auto;
+      background: #2563eb;
+      color: white;
+      padding: 12px;
+      border-radius: 10px;
+    }
+
+    .timestamp {
+      font-size: 11px;
+      color: #9ca3af;
+      margin-top: 4px;
+    }
+
+    /* Input */
     .input-area {
       display: flex;
       padding: 12px;
+      border-top: 1px solid #e5e7eb;
+      background: #ffffff;
     }
-    input {
+
+    .input-area input {
       flex: 1;
-      padding: 8px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid #d1d5db;
+      outline: none;
+      font-size: 14px;
     }
-    button {
+
+    .send-btn {
       margin-left: 8px;
-      padding: 8px 12px;
+      background: #0ea5a4;
+      border: none;
+      color: white;
+      padding: 0 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+
+    .send-btn:hover {
+      background: #0d9488;
+    }
+
+    ul {
+      padding-left: 18px;
+      margin: 8px 0;
     }
   </style>
 </head>
 <body>
 
 <div class="chat-container">
-  <div class="messages" id="messages"></div>
+  <!-- Header -->
+  <div class="header">
+    <div class="header-title">CMMS AI Assistant</div>
+    <div class="header-subtitle">Your maintenance operations co-pilot</div>
+  </div>
+
+  <!-- Messages -->
+  <div class="messages" id="messages">
+    <div class="message bot">
+      <strong>Hello! I'm your CMMS AI Assistant.</strong> I can help you with:
+      <ul>
+        <li>Asset information and status</li>
+        <li>Work order management</li>
+        <li>Maintenance schedules</li>
+        <li>Equipment performance insights</li>
+      </ul>
+      How can I assist you today?
+      <div class="timestamp">05:04 PM</div>
+    </div>
+  </div>
+
+  <!-- Input -->
   <div class="input-area">
-    <input id="input" placeholder="Type a message..." />
-    <button onclick="send()">Send</button>
+    <input id="input" placeholder="Ask about assets, work orders, maintenance status..." />
+    <button class="send-btn" onclick="send()">➤</button>
   </div>
 </div>
 
@@ -65,9 +152,16 @@
     const text = input.value.trim();
     if (!text) return;
 
-    messages.innerHTML += `<div class="message user">You: ${text}</div>`;
+    // User message
+    messages.innerHTML += `
+      <div class="message user">
+        ${text}
+      </div>
+    `;
     input.value = "";
+    messages.scrollTop = messages.scrollHeight;
 
+    // Call backend
     const response = await fetch("/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -75,7 +169,13 @@
     });
 
     const data = await response.json();
-    messages.innerHTML += `<div class="message bot">AI: ${data.response}</div>`;
+
+    // Bot message
+    messages.innerHTML += `
+      <div class="message bot">
+        ${data.response}
+      </div>
+    `;
     messages.scrollTop = messages.scrollHeight;
   }
 </script>

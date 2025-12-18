@@ -83,7 +83,7 @@ class LocalHostModel:
     def chat(
         self,
         messages: List[Dict[str, str]],
-        temperature: float = 0.3,
+        temperature: float = 0.2,
         max_tokens: int = 300,
     ) -> str:
         response = self.client.chat.completions.create(
