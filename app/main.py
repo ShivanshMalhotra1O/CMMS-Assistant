@@ -12,6 +12,8 @@ from app.models.models_list import get_model
 from app.core.llm_warmup import warmup_llm
 from contextlib import asynccontextmanager
 
+from app.policy.engine import PolicyDecision, PolicyResult, evaluate_policy
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -64,22 +66,24 @@ def health():
 def chat(request: ChatRequest):
 
     logger.info(f"Chat request: {request.message}")
-    intent = route_intent(request.message)
-    logger.info(f"Intent: {intent}")
-    chat_history.append({"role": "user", "content": request.message})
+    user_message = request.message
+    user_contxt = request.user
+    # chat_history.append({"role": "user", "content": request.message})
 
-    if intent == Intent.CHAT:
-        response = chatbot.run(request.message)
-        logger.info(f"Chat response: {response}")
-        chat_history.append({"role": "assistant", "content": response})
+    intent = route_intent(user_message)
+
+    policy_result = evaluate_policy(
+        intent = intent,
+        user_context=user_contxt,
+        user_input=user_message
+    )
+
+    if policy_result.decision == PolicyDecision.ALLOW:
+        response = chatbot.run(user_message)
         return {"response": response}
     
-    if intent == Intent.EXECUTE_TASK:
-      
-        return{"response": "It has not been implemented yet, still working on it"}
-    
-    if intent == Intent.ANALYZE:
-        return{"response": "It has not been implemented yet, still working on it"}
+    if policy_result.decision == PolicyDecision.BLOCK:
+        return{"response":policy_result.reason}
 
     return {"response": "Unsupported intent"}
     

@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <title>CMMS AI Chat</title>
@@ -17,7 +18,7 @@
       width: 420px;
       background: #ffffff;
       border-radius: 12px;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -59,7 +60,7 @@
       background: #ffffff;
       padding: 12px;
       border-radius: 10px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
     }
 
     .user {
@@ -114,71 +115,83 @@
     }
   </style>
 </head>
+
 <body>
 
-<div class="chat-container">
-  <!-- Header -->
-  <div class="header">
-    <div class="header-title">CMMS AI Assistant</div>
-    <div class="header-subtitle">Your maintenance operations co-pilot</div>
-  </div>
+  <div class="chat-container">
+    <!-- Header -->
+    <div class="header">
+      <div class="header-title">CMMS AI Assistant</div>
+      <div class="header-subtitle">Your maintenance operations co-pilot</div>
+    </div>
 
-  <!-- Messages -->
-  <div class="messages" id="messages">
-    <div class="message bot">
-      <strong>Hello! I'm your CMMS AI Assistant.</strong> I can help you with:
-      <ul>
-        <li>Asset information and status</li>
-        <li>Work order management</li>
-        <li>Maintenance schedules</li>
-        <li>Equipment performance insights</li>
-      </ul>
-      How can I assist you today?
-      <div class="timestamp">05:04 PM</div>
+    <!-- Messages -->
+    <div class="messages" id="messages">
+      <div class="message bot">
+        <strong>Hello! I'm your CMMS AI Assistant.</strong> I can help you with:
+        <ul>
+          <li>Asset information and status</li>
+          <li>Work order management</li>
+          <li>Maintenance schedules</li>
+          <li>Equipment performance insights</li>
+        </ul>
+        How can I assist you today?
+        <div class="timestamp">05:04 PM</div>
+      </div>
+    </div>
+
+    <!-- Input -->
+    <div class="input-area">
+      <input id="input" placeholder="Ask about assets, work orders, maintenance status..." />
+      <button class="send-btn" onclick="send()">➤</button>
     </div>
   </div>
 
-  <!-- Input -->
-  <div class="input-area">
-    <input id="input" placeholder="Ask about assets, work orders, maintenance status..." />
-    <button class="send-btn" onclick="send()">➤</button>
-  </div>
-</div>
+  <script>
+    async function send() {
+      const input = document.getElementById("input");
+      const messages = document.getElementById("messages");
+      const text = input.value.trim();
+      if (!text) return;
 
-<script>
-  async function send() {
-    const input = document.getElementById("input");
-    const messages = document.getElementById("messages");
-    const text = input.value.trim();
-    if (!text) return;
-
-    // User message
-    messages.innerHTML += `
+      // User message
+      messages.innerHTML += `
       <div class="message user">
         ${text}
       </div>
     `;
-    input.value = "";
-    messages.scrollTop = messages.scrollHeight;
+      input.value = "";
+      messages.scrollTop = messages.scrollHeight;
 
-    // Call backend
-    const response = await fetch("/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text })
-    });
+      const payload = {
+        message: text,
+        user: {
+          username: "john.doe",
+          role: "viewer",
+          department: "maintenance",
+          timestamp: new Date().toISOString()
+        }
+      };
 
-    const data = await response.json();
+      // Call backend
+      const response = await fetch("/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
 
-    // Bot message
-    messages.innerHTML += `
+      const data = await response.json();
+
+      // Bot message
+      messages.innerHTML += `
       <div class="message bot">
         ${data.response}
       </div>
     `;
-    messages.scrollTop = messages.scrollHeight;
-  }
-</script>
+      messages.scrollTop = messages.scrollHeight;
+    }
+  </script>
 
 </body>
+
 </html>
