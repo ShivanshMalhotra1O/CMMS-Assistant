@@ -17,46 +17,38 @@ from enum import Enum
 
 class Action(str, Enum):
     CHAT = 'chat'
-    VIEW_ASSET = 'view_asset'
-    VIEW_WORK_ORDER = 'view_work_order'
-    CREATE_WORK_ORDER = "create_work_order"
-    UPDATE_WORK_ORDER = "update_work_order"
-    CLOSE_WORK_ORDER = "close_work_order"
-    ANALYZE_REPORTS = "analyze_reports"
+    VIEW = 'view'
+    CREATE = "create"
+    UPDATE = "update"
+    ANALYZE = "analyze"
 
 ROLE_PERMISSIONS = {
     "viewer": {
         Action.CHAT,
-        Action.VIEW_ASSET,
-        Action.VIEW_WORK_ORDER,
+        Action.VIEW,
     },
 
     "technician": {
         Action.CHAT,
-        Action.VIEW_ASSET,
-        Action.VIEW_WORK_ORDER,
-        Action.CREATE_WORK_ORDER,
-        Action.UPDATE_WORK_ORDER,
+        Action.VIEW,
+        Action.CREATE,
+        Action.UPDATE,
     },
 
     "manager": {
         Action.CHAT,
-        Action.VIEW_ASSET,
-        Action.VIEW_WORK_ORDER,
-        Action.CREATE_WORK_ORDER,
-        Action.UPDATE_WORK_ORDER,
-        Action.CLOSE_WORK_ORDER,
-        Action.ANALYZE_REPORTS,
+        Action.VIEW,
+        Action.CREATE,
+        Action.UPDATE,
+        Action.ANALYZE,
     },
 
     "admin": {
         Action.CHAT,
-        Action.VIEW_ASSET,
-        Action.VIEW_WORK_ORDER,
-        Action.CREATE_WORK_ORDER,
-        Action.UPDATE_WORK_ORDER,
-        Action.CLOSE_WORK_ORDER,
-        Action.ANALYZE_REPORTS,
+        Action.VIEW,
+        Action.CREATE,
+        Action.UPDATE,
+        Action.ANALYZE,
     },
 }
 

@@ -21,7 +21,8 @@ class ChatResponse(BaseModel):
 
 # Tasker Agent Schemas
 class TaskCommand(BaseModel):
-    action: str             
-    asset_id: Optional[str]
+    work_order_id: Optional[str] = None
+    asset_id: Optional[str] = None
+    action: str | None = None          
     description: Optional[str]
     priority: Optional[str]

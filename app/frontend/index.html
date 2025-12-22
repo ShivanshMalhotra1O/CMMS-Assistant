@@ -4,6 +4,7 @@
 <head>
   <meta charset="UTF-8" />
   <title>CMMS AI Chat</title>
+
   <style>
     body {
       font-family: Inter, Arial, sans-serif;
@@ -119,6 +120,7 @@
 <body>
 
   <div class="chat-container">
+
     <!-- Header -->
     <div class="header">
       <div class="header-title">CMMS AI Assistant</div>
@@ -142,9 +144,14 @@
 
     <!-- Input -->
     <div class="input-area">
-      <input id="input" placeholder="Ask about assets, work orders, maintenance status..." />
+      <input
+        id="input"
+        placeholder="Ask about assets, work orders, maintenance status..."
+        onkeydown="handleKey(event)"
+      />
       <button class="send-btn" onclick="send()">➤</button>
     </div>
+
   </div>
 
   <script>
@@ -152,14 +159,15 @@
       const input = document.getElementById("input");
       const messages = document.getElementById("messages");
       const text = input.value.trim();
+
       if (!text) return;
 
       // User message
       messages.innerHTML += `
-      <div class="message user">
-        ${text}
-      </div>
-    `;
+        <div class="message user">
+          ${text}
+        </div>
+      `;
       input.value = "";
       messages.scrollTop = messages.scrollHeight;
 
@@ -173,22 +181,37 @@
         }
       };
 
-      // Call backend
-      const response = await fetch("/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
+      try {
+        const response = await fetch("/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
 
-      const data = await response.json();
+        const data = await response.json();
 
-      // Bot message
-      messages.innerHTML += `
-      <div class="message bot">
-        ${data.response}
-      </div>
-    `;
+        // Bot message
+        messages.innerHTML += `
+          <div class="message bot">
+            ${data.response}
+          </div>
+        `;
+      } catch (error) {
+        messages.innerHTML += `
+          <div class="message bot">
+            ❌ Error connecting to server.
+          </div>
+        `;
+      }
+
       messages.scrollTop = messages.scrollHeight;
+    }
+
+    function handleKey(event) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        send();
+      }
     }
   </script>
 

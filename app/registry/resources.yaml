@@ -1,0 +1,106 @@
+# =========================================================
+# CMMS Resource Registry
+# Defines allowed resources, schemas, and DB queries
+# =========================================================
+
+work_order:
+  collection: workorders
+
+  schema:
+    workOrderId: string
+    name: string
+    description: string
+    workStatus: string
+    priority: string
+    category: string
+    dueDate: datetime
+    asset: object_id
+    createdAt: datetime
+    updatedAt: datetime
+
+  actions:
+
+    view:
+      description: View a single work order by ID
+      query_type: single
+      required_params:
+        - work_order_id
+      query:
+        field: workOrderId
+
+      response:
+        title: "🛠️ Work Order Details"
+        fields:
+          workOrderId: "Work Order ID"
+          name: "Title"
+          description: "Description"
+          workStatus: "Status"
+          priority: "Priority"
+          category: "Category"
+          dueDate: "Due Date"
+
+    list:
+      description: List all work orders
+      query_type: list
+      required_params: []
+
+    list_by_status:
+      description: List work orders filtered by status
+      query_type: list
+      required_params:
+        - workStatus
+      query:
+        field: workStatus
+
+
+
+asset:
+  collection: assets
+
+  schema:
+    assetId: string
+    name: string
+    status: string
+    category: string
+    location: string
+
+  actions:
+
+    view:
+      description: View asset by ID
+      query_type: single
+      required_params:
+        - asset_id
+      query:
+        field: assetId
+
+    list:
+      description: List all assets
+      query_type: list
+      required_params: []
+
+
+pm:
+  collection: preventive_maintenance
+
+  schema:
+    pmId: string
+    name: string
+    frequency: string
+    status: string
+    nextRunDate: datetime
+
+  actions:
+
+    view:
+      description: View PM by ID
+      query_type: single
+      required_params:
+        - pm_id
+      query:
+        field: pmId
+
+    list:
+      description: List all PM schedules
+      query_type: list
+      required_params: []
