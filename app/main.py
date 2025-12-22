@@ -1,6 +1,6 @@
 from fastapi import FastAPI
-
 from app.agents.chatbot import ChatbotAgent
+from app.agents.tasker import TaskerAgent
 from app.models.schemas import ChatRequest, ChatResponse
 from app.orchestration.router import route_intent, Intent
 from fastapi.responses import FileResponse
@@ -33,19 +33,20 @@ app.mount(
 )
 
 
-# OpenAI
-# model = get_model(
+# # OpenAI
+# tasker_model = get_model(
 #     provider="openai",
 #     model_name="gpt-4o-mini"
 # )
 
-# Local Hostes
-model = get_model(
+# Local Hosted
+chat_model = get_model(
     provider="local_host",
     model_name="qwen2.5:7b"
 )
 
-chatbot = ChatbotAgent(model)
+chatbot = ChatbotAgent(chat_model)
+tasker  = TaskerAgent()
 
 
 # ------------------------------------ Routes ------------------------------------------------------------------
@@ -79,8 +80,18 @@ def chat(request: ChatRequest):
     )
 
     if policy_result.decision == PolicyDecision.ALLOW:
-        response = chatbot.run(user_message)
-        return {"response": response}
+        if intent == Intent.CHAT:
+            response = chatbot.run(user_message)
+            return {"response": response}
+
+        if intent == Intent.EXECUTE_TASK:
+            task_command = tasker.run(user_message)
+            return {
+                "response": (
+                    "Task recognized but not executed yet.\n\n"
+                    f"{task_command.model_dump()}"
+                )
+            }
     
     if policy_result.decision == PolicyDecision.BLOCK:
         return{"response":policy_result.reason}
