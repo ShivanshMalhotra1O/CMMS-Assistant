@@ -4,6 +4,7 @@ from enum import Enum
 from dataclasses import dataclass # Dataclass is a python class that stores data for us.
 from app.models.schemas import UserContext
 from app.orchestration.router import Intent
+from app.policy.roles import Action, role_can, ROLE_PERMISSIONS
 
 
 class PolicyDecision(str,Enum):
@@ -16,9 +17,37 @@ class PolicyResult:
     decision: PolicyDecision
     reason: str
 
+def resolve_action(intent: Intent, user_input: str) -> Action:
+    text = user_input.lower()
+
+    # --- VIEW actions ---
+    if any(word in text for word in ["view", "list", "show", "get", "status"]):
+        return Action.VIEW_WORK_ORDER
+
+    # --- CREATE actions ---
+    if any(word in text for word in ["create", "open", "add"]):
+        return Action.CREATE_WORK_ORDER
+
+    # --- UPDATE actions ---
+    if any(word in text for word in ["update", "modify", "change"]):
+        return Action.UPDATE_WORK_ORDER
+
+    # --- CLOSE actions ---
+    if any(word in text for word in ["close", "complete"]):
+        return Action.CLOSE_WORK_ORDER
+
+    # --- ANALYZE ---
+    if intent == Intent.ANALYZE:
+        return Action.ANALYZE_REPORTS
+
+    # Default safe action
+    return Action.CHAT
+
+
 def evaluate_policy(intent: Intent, user_context: UserContext, user_input: str) -> PolicyResult:
     
     role = user_context.role.lower()
+    action = resolve_action(intent, user_input)
 
     if intent == Intent.CHAT:
         return PolicyResult(
@@ -26,31 +55,14 @@ def evaluate_policy(intent: Intent, user_context: UserContext, user_input: str) 
             reason="Chat allowed"
         )
     
-    if intent == Intent.EXECUTE_TASK:
-        if role not in ['manager','admin','technician']:
-            return PolicyResult(
-                decision=PolicyDecision.BLOCK,
-                reason="You dont have permission to execute this."
-            )
-        
+    if not role_can(role, action):
         return PolicyResult(
-            decision= PolicyDecision.BLOCK,
-            reason="Feature not implemented yet"
-        )
-
-    if intent == Intent.ANALYZE:
-        if role not in ['manager','admin','technician']:
-            return PolicyResult(
-                decision=PolicyDecision.BLOCK,
-                reason="You dont have permission to execute this."
-            )
-        
-        return PolicyResult(
-            decision= PolicyDecision.BLOCK,
-            reason="Feature not implemented yet"
+            decision=PolicyDecision.BLOCK,
+            reason="You dont have permission to execute this."
         )
     
     return PolicyResult(
-        decision=PolicyDecision.BLOCK,
-        reason="Unhandled intent",
+        decision= PolicyDecision.BLOCK,
+        reason="Feature not implemented yet"
     )
+
