@@ -4,6 +4,9 @@ from datetime import datetime
 
 from app.policy.roles import Action
 from app.policy.engine import Resource
+from app.query.builder import build_query
+
+from app.query.mongo_executer import execute_mongo
 
 
 # -------------------------
@@ -14,23 +17,17 @@ def serialize_value(value):
         return str(value)
     if isinstance(value, datetime):
         return value.strftime("%Y-%m-%d %H:%M")
+    if value is None:
+        return "-"
     return value
 
 
 def format_from_registry(resource_def: dict, action_key: str, record: dict) -> str:
-    """
-    Generic formatter driven entirely by the registry.
-    """
-
-    response_def = (
-        resource_def
-        .get("actions", {})
-        .get(action_key, {})
-        .get("response")
-    )
+    action_def = resource_def.get("actions", {}).get(action_key, {})
+    response_def = action_def.get("response")
 
     if not response_def:
-        return "Action completed successfully."
+        return "✔ Record retrieved."
 
     title = response_def.get("title", "Result")
     fields = response_def.get("fields", {})
@@ -45,7 +42,7 @@ def format_from_registry(resource_def: dict, action_key: str, record: dict) -> s
 
 
 # -------------------------
-# Executor
+# Executor (UPDATED)
 # -------------------------
 def execute_action(
     db: Database,
@@ -58,65 +55,59 @@ def execute_action(
     resource_key = resource.value
     action_key = action.value
 
-    # Validate resource
+    # -------------------------
+    # Validate registry
+    # -------------------------
     if resource_key not in registry:
-        return "Unsupported resource."
+        return "❌ Unsupported resource."
 
     resource_def = registry[resource_key]
     actions_def = resource_def.get("actions", {})
 
-    # Validate action
     if action_key not in actions_def:
-        return "This action is not supported for this resource."
+        return "❌ This action is not supported for this resource."
 
     action_def = actions_def[action_key]
 
-    # Validate required params
-    for param in action_def.get("required_params", []):
-        if param not in params or not params[param]:
-            return f"Missing required parameter: {param}"
+    # -------------------------
+    # Build abstract query (LLM-friendly)
+    # -------------------------
+    query = build_query(
+        registry=registry,
+        # action=action.value,
+        resource=resource,
+        params=params
+    )
 
-    collection = db[resource_def["collection"]]
+    print(query)
+    # -------------------------
+    # Execute query
+    # -------------------------
+    result = execute_mongo(db, query)
 
-    # Build query
-    query = {}
-    if "query" in action_def:
-        field = action_def["query"]["field"]
-        param_name = action_def["required_params"][0]
-        query[field] = params[param_name]
+    if not result:
+        return "❌ No records found."
 
     # -------------------------
-    # Execute queries
+    # Format response
     # -------------------------
-    if action_def["query_type"] == "single":
-        record = collection.find_one(query)
+   
+    title = action_def.get(
+        "list_title",
+        resource_def.get("list_title", f"{resource_key.title()} List")
+    )
 
-        if not record:
-            return "Record not found."
+    response = [title, "-" * len(title)]
 
-        return format_from_registry(
-            resource_def=resource_def,
-            action_key=action_key,
-            record=record
-        )
-
-    if action_def["query_type"] == "list":
-        records = list(collection.find(query))
-
-        if not records:
-            return "No records found."
-
-        title = resource_def.get("list_title", "Results")
-        response = f"{title}\n" + "-" * len(title) + "\n"
-
-        for r in records[:10]:  # safety limit
-            response += format_from_registry(
+    for record in result:
+        response.append(
+            format_from_registry(
                 resource_def=resource_def,
                 action_key=action_key,
-                record=r
+                
+                record=record
             )
-            response += "\n\n"
+        )
+        response.append("")
 
-        return response.strip()
-
-    return "Unsupported query type."
+    return "\n".join(response).strip()
