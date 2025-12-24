@@ -1,48 +1,14 @@
 from pymongo.database import Database
-from bson import ObjectId
-from datetime import datetime
 
 from app.policy.roles import Action
 from app.policy.engine import Resource
 from app.query.builder import build_query
-
 from app.query.mongo_executer import execute_mongo
+from app.utils.formatters import format_from_registry  
 
 
 # -------------------------
-# Helpers
-# -------------------------
-def serialize_value(value):
-    if isinstance(value, ObjectId):
-        return str(value)
-    if isinstance(value, datetime):
-        return value.strftime("%Y-%m-%d %H:%M")
-    if value is None:
-        return "-"
-    return value
-
-
-def format_from_registry(resource_def: dict, action_key: str, record: dict) -> str:
-    action_def = resource_def.get("actions", {}).get(action_key, {})
-    response_def = action_def.get("response")
-
-    if not response_def:
-        return "✔ Record retrieved."
-
-    title = response_def.get("title", "Result")
-    fields = response_def.get("fields", {})
-
-    lines = [title, "-" * len(title)]
-
-    for field, label in fields.items():
-        value = serialize_value(record.get(field))
-        lines.append(f"{label}: {value}")
-
-    return "\n".join(lines)
-
-
-# -------------------------
-# Executor (UPDATED)
+# Executor (FINAL)
 # -------------------------
 def execute_action(
     db: Database,
@@ -70,20 +36,27 @@ def execute_action(
     action_def = actions_def[action_key]
 
     # -------------------------
-    # Build abstract query (LLM-friendly)
+    # Build query plan
     # -------------------------
     query = build_query(
         registry=registry,
-        # action=action.value,
         resource=resource,
         params=params
     )
 
-    print(query)
+    print("DEBUG → QueryPlan:", query)
+
     # -------------------------
     # Execute query
     # -------------------------
-    result = execute_mongo(db, query)
+    result = execute_mongo(
+        db=db,
+        query=query,
+        registry=registry,
+        resource=resource_key
+    )
+
+    print("DEBUG → Result:", result)
 
     if not result:
         return "❌ No records found."
@@ -91,10 +64,9 @@ def execute_action(
     # -------------------------
     # Format response
     # -------------------------
-   
     title = action_def.get(
         "list_title",
-        resource_def.get("list_title", f"{resource_key.title()} List")
+        f"{resource_key.replace('_', ' ').title()} List"
     )
 
     response = [title, "-" * len(title)]
@@ -104,7 +76,6 @@ def execute_action(
             format_from_registry(
                 resource_def=resource_def,
                 action_key=action_key,
-                
                 record=record
             )
         )

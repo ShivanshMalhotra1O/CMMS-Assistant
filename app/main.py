@@ -66,7 +66,7 @@ if not registry or not isinstance(registry, dict):
 # -------------------- Models --------------------
 chat_model = get_model(
     provider="local_host",
-    model_name=""
+    model_name="qwen2.5:7b"
 )
 
 chatbot = ChatbotAgent(chat_model)

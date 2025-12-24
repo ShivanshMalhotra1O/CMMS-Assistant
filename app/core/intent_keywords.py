@@ -25,6 +25,7 @@ Task_Keywords = {
 
     # Read-style operations (still tasks, but weaker)
     "view": 0.55,
+    "all": 0.6,
     "list": 0.55,
     "search": 0.55,
     "find": 0.55,
@@ -35,6 +36,7 @@ Task_Keywords = {
     "search all": 0.6,
     "find all": 0.6,
     "get all": 0.6,
+    "currently":0.6
 }
 
 Analyze_Keywords = {

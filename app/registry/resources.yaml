@@ -1,30 +1,67 @@
 # =========================================================
-# CMMS Resource Registry (FOOL-PROOF)
+# CMMS Resource Registry (FOOL-PROOF, DB + QUERY AWARE)
 # =========================================================
 
 work_order:
   collection: workorders
 
+  identifiers:
+    primary: workOrderId
+    mongo: _id
+
   schema:
-    workOrderId: string
-    name: string
-    description: string
-    workStatus: string
-    priority: string
-    category: string
-    dueDate: datetime
-    asset: object_id
-    createdAt: datetime
-    updatedAt: datetime
+    workOrderId:
+      type: string
+      required: true
+    name:
+      type: string
+      required: true
+    description:
+      type: string
+    workStatus:
+      type: string
+    priority:
+      type: string
+    category:
+      type: string
+    dueDate:
+      type: datetime
+    asset:
+      type: object_id
+    createdAt:
+      type: datetime
+    updatedAt:
+      type: datetime
+
+  indexes:
+    - workOrderId
+    - createdAt
+    - workStatus
+    - priority
+
+  relations:
+    asset:
+      resource: asset
+      local_field: asset
+      foreign_field: _id
+      type: one
+      exposable_fields:
+        name: name
+        location: location
+        assetStatus: assetStatus
 
   actions:
     view:
       description: View work orders (single or list)
       query_type: auto
 
-      # -------------------------
-      # WHERE
-      # -------------------------
+      capabilities:
+        filter: true
+        sort: true
+        limit: true
+        join: true
+        aggregate: false
+
       filters:
         id: workOrderId
         status: workStatus
@@ -32,9 +69,6 @@ work_order:
         category: category
         asset: asset
 
-      # -------------------------
-      # ORDER BY (explicit only)
-      # -------------------------
       sorts:
         recent:
           field: createdAt
@@ -46,19 +80,17 @@ work_order:
           field: priority
           order: desc
 
-      # -------------------------
-      # LIMIT (safety)
-      # -------------------------
       limits:
         default: 10
         max: 50
 
-      # -------------------------
-      # FALLBACK (never fail)
-      # -------------------------
       fallback:
         sort: recent
         limit: default
+
+      query_cache:
+        enabled: true
+        ttl_seconds: 300
 
       list_title: "📋 Work Orders"
 
@@ -69,31 +101,54 @@ work_order:
           name: "Title"
           workStatus: "Status"
           priority: "Priority"
+          asset.name: "Asset"
+          asset.location: "Location"
 
 # =========================================================
 
 asset:
   collection: assets
 
+  identifiers:
+    primary: serialNumber
+    mongo: _id
+
   schema:
-    _id: object_id
-    serialNumber: string
-    name: string
-    assetStatus: string
-    category: string
-    location: string
-    typeOfAsset: string
-    manufacturer: string
-    createdAt: datetime
+    serialNumber:
+      type: string
+      required: true
+    name:
+      type: string
+    assetStatus:
+      type: string
+    category:
+      type: string
+    location:
+      type: string
+    typeOfAsset:
+      type: string
+    manufacturer:
+      type: string
+    createdAt:
+      type: datetime
+
+  indexes:
+    - serialNumber
+    - assetStatus
+    - createdAt
 
   actions:
     view:
       description: View assets (single or list)
       query_type: auto
 
-      # -------------------------
-      # WHERE
-      # -------------------------
+      capabilities:
+        filter: true
+        sort: true
+        limit: true
+        join: false
+        aggregate: false
+
       filters:
         id: serialNumber
         status: assetStatus
@@ -102,9 +157,6 @@ asset:
         type: typeOfAsset
         manufacturer: manufacturer
 
-      # -------------------------
-      # ORDER BY
-      # -------------------------
       sorts:
         recent:
           field: createdAt
@@ -113,19 +165,17 @@ asset:
           field: name
           order: asc
 
-      # -------------------------
-      # LIMIT
-      # -------------------------
       limits:
         default: 10
         max: 50
 
-      # -------------------------
-      # FALLBACK
-      # -------------------------
       fallback:
         sort: recent
         limit: default
+
+      query_cache:
+        enabled: true
+        ttl_seconds: 300
 
       list_title: "📋 Assets"
 
@@ -143,30 +193,47 @@ asset:
 pm:
   collection: preventive_maintenance
 
+  identifiers:
+    primary: pmId
+    mongo: _id
+
   schema:
-    pmId: string
-    name: string
-    frequency: string
-    status: string
-    nextRunDate: datetime
-    createdAt: datetime
+    pmId:
+      type: string
+      required: true
+    name:
+      type: string
+    frequency:
+      type: string
+    status:
+      type: string
+    nextRunDate:
+      type: datetime
+    createdAt:
+      type: datetime
+
+  indexes:
+    - pmId
+    - nextRunDate
+    - createdAt
 
   actions:
     view:
       description: View PM schedules (single or list)
       query_type: auto
 
-      # -------------------------
-      # WHERE
-      # -------------------------
+      capabilities:
+        filter: true
+        sort: true
+        limit: true
+        join: false
+        aggregate: false
+
       filters:
         id: pmId
         status: status
         frequency: frequency
 
-      # -------------------------
-      # ORDER BY
-      # -------------------------
       sorts:
         upcoming:
           field: nextRunDate
@@ -175,19 +242,17 @@ pm:
           field: createdAt
           order: desc
 
-      # -------------------------
-      # LIMIT
-      # -------------------------
       limits:
         default: 10
         max: 50
 
-      # -------------------------
-      # FALLBACK
-      # -------------------------
       fallback:
         sort: upcoming
         limit: default
+
+      query_cache:
+        enabled: true
+        ttl_seconds: 300
 
       list_title: "📋 PM Schedules"
 
@@ -199,3 +264,94 @@ pm:
           frequency: "Frequency"
           status: "Status"
           nextRunDate: "Next Run Date"
+
+# =========================================================
+
+downtime:
+  collection: downtimes
+
+  identifiers:
+    primary: _id
+    mongo: _id
+
+  schema:
+    assetId:
+      type: object_id
+      required: true
+    companyId:
+      type: object_id
+      required: true
+    start:
+      type: datetime
+      required: true
+    end:
+      type: datetime
+    state:
+      type: string
+    reason:
+      type: array
+    createdAt:
+      type: datetime
+
+  indexes:
+    - assetId
+    - companyId
+    - start
+    - state
+
+  relations:
+    asset:
+      resource: asset
+      local_field: assetId
+      foreign_field: _id
+      type: one
+      exposable_fields:
+        name: assetName
+        location: assetLocation
+
+  actions:
+    view:
+      description: View downtime records
+      query_type: auto
+
+      capabilities:
+        filter: true
+        sort: true
+        limit: true
+        join: true
+        aggregate: false
+
+      filters:
+        asset: assetId
+        company: companyId
+        state: state
+
+      sorts:
+        recent:
+          field: start
+          order: desc
+        oldest:
+          field: start
+          order: asc
+
+      limits:
+        default: 10
+        max: 100
+
+      fallback:
+        sort: recent
+        limit: default
+
+      query_cache:
+        enabled: true
+        ttl_seconds: 300
+
+      list_title: "📉 Downtime Records"
+
+      response:
+        title: "⛔ Asset Downtime"
+        fields:
+          assetName: "Asset"
+          state: "State"
+          start: "Start Time"
+          end: "End Time"

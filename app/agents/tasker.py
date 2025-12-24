@@ -58,6 +58,7 @@ class TaskerAgent:
                 5. If nothing is mentioned → return empty filters.
                 6. ALWAYS use action = "view" for read requests.
                 7. Never explain. Always return a best guess.
+                8. If the user asks for fields from another resource (example: asset name in work orders),mark the request as requiring related data.
 
                 ------------------------------------
                 STATUS NORMALIZATION (WORK ORDERS)

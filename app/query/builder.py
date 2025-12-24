@@ -9,56 +9,55 @@ class QueryPlan:
     filter: Dict[str, Any]
     sort: list
     limit: int
+    joins: list | None = None
 
 
-def build_query(
-    registry: dict,
-    resource: Resource,
-    params: dict
-) -> QueryPlan:
-
+def build_query(registry, resource: Resource, params: dict) -> QueryPlan:
     resource_def = registry[resource.value]
     action_def = resource_def["actions"]["view"]
 
-    # -------------------------
-    # WHERE
-    # -------------------------
-    query_filter: Dict[str, Any] = {}
+    query_filter = {}
+    joins = []
 
+    # -------------------------
+    # Filters
+    # -------------------------
     for param, field in action_def.get("filters", {}).items():
         if param in params and params[param] is not None:
             query_filter[field] = params[param]
 
     # -------------------------
-    # SORT
+    # Sort & Limit (fallback-safe)
     # -------------------------
-    sort_def = action_def.get("sorts", {})
     fallback = action_def.get("fallback", {})
+    sort_key = params.get("sort") or fallback.get("sort")
+    limit = params.get("limit") or action_def["limits"]["default"]
 
-    sort_key = params.get("sort")
-    sort_rule = sort_def.get(sort_key) if sort_key else None
-
-    if not sort_rule:
-        sort_rule = sort_def.get(fallback.get("sort"))
-
-    sort = []
-    if sort_rule:
-        order = -1 if sort_rule["order"] == "desc" else 1
-        sort = [(sort_rule["field"], order)]
+    sort = None
+    if sort_key:
+        sort_def = action_def["sorts"].get(sort_key)
+        if sort_def:
+            order = -1 if sort_def["order"] == "desc" else 1
+            sort = [(sort_def["field"], order)]
 
     # -------------------------
-    # LIMIT
+    # JOIN DETECTION 
     # -------------------------
-    limits_def = action_def.get("limits", {})
-    default_limit = limits_def.get("default", 10)
-    max_limit = limits_def.get("max", default_limit)
+    free_text = params.get("free_text", "").lower()
 
-    requested_limit = params.get("limit")
-    limit = min(requested_limit, max_limit) if requested_limit else default_limit
+    relations = resource_def.get("relations", {})
+    for rel_name, rel_def in relations.items():
+        for exposed_field in rel_def.get("exposable_fields", {}).keys():
+            if exposed_field.lower() in free_text:
+                joins.append(rel_name)
+                break
+    
+                
 
     return QueryPlan(
         collection=resource_def["collection"],
         filter=query_filter,
         sort=sort,
-        limit=limit
+        limit=limit,
+        joins=joins or None
     )
