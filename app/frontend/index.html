@@ -6,20 +6,29 @@
   <title>CMMS AI Chat</title>
 
   <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
     body {
-      font-family: Inter, Arial, sans-serif;
-      background: #f4f6f8;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       display: flex;
       justify-content: center;
-      align-items: flex-start;
-      padding-top: 40px;
+      align-items: center;
+      min-height: 100vh;
+      padding: 20px;
     }
 
     .chat-container {
-      width: 420px;
+      width: 100%;
+      max-width: 800px;
+      height: 85vh;
       background: #ffffff;
-      border-radius: 12px;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -27,92 +36,203 @@
 
     /* Header */
     .header {
-      padding: 16px;
-      border-bottom: 1px solid #e5e7eb;
+      padding: 20px 24px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
     }
 
     .header-title {
       font-weight: 600;
-      font-size: 16px;
+      font-size: 20px;
+      margin-bottom: 4px;
     }
 
     .header-subtitle {
-      font-size: 13px;
-      color: #6b7280;
-      margin-top: 2px;
+      font-size: 14px;
+      opacity: 0.9;
     }
 
     /* Messages */
     .messages {
-      padding: 16px;
-      height: 420px;
+      flex: 1;
+      padding: 24px;
       overflow-y: auto;
-      background: #f9fafb;
+      background: #f8f9fa;
     }
 
     .message {
-      margin-bottom: 14px;
+      margin-bottom: 16px;
+      animation: fadeIn 0.3s ease-in;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .message-content {
       max-width: 85%;
-      line-height: 1.4;
+      padding: 14px 18px;
+      border-radius: 12px;
+      line-height: 1.5;
       font-size: 14px;
+      word-wrap: break-word;
+      white-space: pre-wrap;
+      font-family: 'Courier New', monospace;
     }
 
-    .bot {
+    .bot .message-content {
       background: #ffffff;
-      padding: 12px;
-      border-radius: 10px;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+      border: 1px solid #e5e7eb;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+      color: #1f2937;
     }
 
-    .user {
+    .user .message-content {
       margin-left: auto;
-      background: #2563eb;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       color: white;
-      padding: 12px;
-      border-radius: 10px;
+      float: right;
+      clear: both;
     }
 
     .timestamp {
       font-size: 11px;
       color: #9ca3af;
-      margin-top: 4px;
+      margin-top: 6px;
+      font-family: 'Segoe UI', sans-serif;
+    }
+
+    .bot .timestamp {
+      text-align: left;
+    }
+
+    .user .timestamp {
+      text-align: right;
+      color: rgba(255, 255, 255, 0.7);
+    }
+
+    /* Intro message styling */
+    .intro-message {
+      background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+      border: 1px solid #bae6fd;
+      padding: 18px;
+      border-radius: 12px;
+      font-family: 'Segoe UI', sans-serif;
+      white-space: normal;
+    }
+
+    .intro-message strong {
+      color: #0369a1;
+      display: block;
+      margin-bottom: 12px;
+      font-size: 15px;
+    }
+
+    .intro-message ul {
+      padding-left: 20px;
+      margin: 12px 0;
+      color: #334155;
+    }
+
+    .intro-message li {
+      margin: 6px 0;
+    }
+
+    /* Loading indicator */
+    .loading {
+      display: inline-block;
+      padding: 12px 18px;
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    }
+
+    .loading::after {
+      content: '●●●';
+      animation: dots 1.5s steps(4, end) infinite;
+    }
+
+    @keyframes dots {
+      0%, 20% { content: '●'; }
+      40% { content: '●●'; }
+      60%, 100% { content: '●●●'; }
     }
 
     /* Input */
     .input-area {
       display: flex;
-      padding: 12px;
+      padding: 20px 24px;
       border-top: 1px solid #e5e7eb;
       background: #ffffff;
+      gap: 12px;
     }
 
     .input-area input {
       flex: 1;
-      padding: 10px 12px;
-      border-radius: 8px;
-      border: 1px solid #d1d5db;
+      padding: 14px 16px;
+      border-radius: 10px;
+      border: 2px solid #e5e7eb;
       outline: none;
       font-size: 14px;
+      transition: border-color 0.2s;
+    }
+
+    .input-area input:focus {
+      border-color: #667eea;
     }
 
     .send-btn {
-      margin-left: 8px;
-      background: #0ea5a4;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       border: none;
       color: white;
-      padding: 0 14px;
-      border-radius: 8px;
+      padding: 14px 24px;
+      border-radius: 10px;
       cursor: pointer;
-      font-size: 16px;
+      font-size: 14px;
+      font-weight: 600;
+      transition: transform 0.2s, box-shadow 0.2s;
     }
 
     .send-btn:hover {
-      background: #0d9488;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
     }
 
-    ul {
-      padding-left: 18px;
-      margin: 8px 0;
+    .send-btn:active {
+      transform: translateY(0);
+    }
+
+    /* Scrollbar */
+    .messages::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    .messages::-webkit-scrollbar-track {
+      background: #f1f1f1;
+    }
+
+    .messages::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 4px;
+    }
+
+    .messages::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+
+    /* Clear floats */
+    .clearfix::after {
+      content: "";
+      display: table;
+      clear: both;
     }
   </style>
 </head>
@@ -123,22 +243,25 @@
 
     <!-- Header -->
     <div class="header">
-      <div class="header-title">CMMS AI Assistant</div>
-      <div class="header-subtitle">Your maintenance operations co-pilot</div>
+      <div class="header-title">🤖 CMMS AI Assistant</div>
+      <div class="header-subtitle">Your intelligent maintenance operations co-pilot</div>
     </div>
 
     <!-- Messages -->
     <div class="messages" id="messages">
       <div class="message bot">
-        <strong>Hello! I'm your CMMS AI Assistant.</strong> I can help you with:
-        <ul>
-          <li>Asset information and status</li>
-          <li>Work order management</li>
-          <li>Maintenance schedules</li>
-          <li>Equipment performance insights</li>
-        </ul>
-        How can I assist you today?
-        <div class="timestamp">05:04 PM</div>
+        <div class="intro-message">
+          <strong>👋 Hello! I'm your CMMS AI Assistant.</strong>
+          I can help you with:
+          <ul>
+            <li>📦 Asset information and status</li>
+            <li>🔧 Work order management</li>
+            <li>📅 Maintenance schedules</li>
+            <li>📊 Equipment performance insights</li>
+          </ul>
+          How can I assist you today?
+        </div>
+        <div class="timestamp" id="initial-time"></div>
       </div>
     </div>
 
@@ -149,12 +272,18 @@
         placeholder="Ask about assets, work orders, maintenance status..."
         onkeydown="handleKey(event)"
       />
-      <button class="send-btn" onclick="send()">➤</button>
+      <button class="send-btn" onclick="send()">Send ➤</button>
     </div>
 
   </div>
 
   <script>
+    // Set initial timestamp
+    document.getElementById('initial-time').textContent = new Date().toLocaleTimeString('en-US', { 
+      hour: '2-digit', 
+      minute: '2-digit' 
+    });
+
     async function send() {
       const input = document.getElementById("input");
       const messages = document.getElementById("messages");
@@ -162,13 +291,28 @@
 
       if (!text) return;
 
+      const timestamp = new Date().toLocaleTimeString('en-US', { 
+        hour: '2-digit', 
+        minute: '2-digit' 
+      });
+
       // User message
-      messages.innerHTML += `
-        <div class="message user">
-          ${text}
-        </div>
+      const userMsg = document.createElement('div');
+      userMsg.className = 'message user clearfix';
+      userMsg.innerHTML = `
+        <div class="message-content">${escapeHtml(text)}</div>
+        <div class="timestamp">${timestamp}</div>
       `;
+      messages.appendChild(userMsg);
+      
       input.value = "";
+      messages.scrollTop = messages.scrollHeight;
+
+      // Show loading
+      const loadingMsg = document.createElement('div');
+      loadingMsg.className = 'message bot';
+      loadingMsg.innerHTML = '<div class="loading"></div>';
+      messages.appendChild(loadingMsg);
       messages.scrollTop = messages.scrollHeight;
 
       const payload = {
@@ -190,18 +334,28 @@
 
         const data = await response.json();
 
+        // Remove loading
+        messages.removeChild(loadingMsg);
+
         // Bot message
-        messages.innerHTML += `
-          <div class="message bot">
-            ${data.response}
-          </div>
+        const botMsg = document.createElement('div');
+        botMsg.className = 'message bot';
+        botMsg.innerHTML = `
+          <div class="message-content">${escapeHtml(data.response)}</div>
+          <div class="timestamp">${timestamp}</div>
         `;
+        messages.appendChild(botMsg);
+        
       } catch (error) {
-        messages.innerHTML += `
-          <div class="message bot">
-            ❌ Error connecting to server.
-          </div>
+        messages.removeChild(loadingMsg);
+        
+        const errorMsg = document.createElement('div');
+        errorMsg.className = 'message bot';
+        errorMsg.innerHTML = `
+          <div class="message-content">❌ Error connecting to server. Please try again.</div>
+          <div class="timestamp">${timestamp}</div>
         `;
+        messages.appendChild(errorMsg);
       }
 
       messages.scrollTop = messages.scrollHeight;
@@ -212,6 +366,12 @@
         event.preventDefault();
         send();
       }
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
     }
   </script>
 

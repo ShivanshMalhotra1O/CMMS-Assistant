@@ -1,179 +1,338 @@
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import PydanticOutputParser
-from app.models.schemas import TaskCommand
-import re
 import os
+from pathlib import Path
 from dotenv import load_dotenv
+import yaml
+import json
+import hashlib
+import time
+
+from app.cache.exact_query_cache import (
+    get_cached_pipeline,
+    set_cached_pipeline,
+    make_cache_key
+)
+from app.memory.query_memory import (
+    retrieve_similar_queries,
+    store_query_memory,
+    hash_registry
+)
 
 load_dotenv()
 
 
+def escape_braces(text: str) -> str:
+    """Escape braces for LangChain prompt templates"""
+    return text.replace("{", "{{").replace("}", "}}")
+
+
+def estimate_tokens(text: str) -> int:
+    """Estimate token count using simple heuristic"""
+    return len(text) // 4
+
+
+def build_experience_block(examples: list[dict]) -> str:
+    """Build experience block from similar past queries"""
+    if not examples:
+        return ""
+
+    lines = [
+        "====================================",
+        "PAST SUCCESSFUL QUERIES (GUIDANCE ONLY)",
+        "Use these as reference patterns.",
+        "DO NOT copy blindly.",
+        "====================================\n"
+    ]
+
+    for ex in examples:
+        lines.append("User Query:")
+        lines.append(str(ex["user_query"]))
+        lines.append("Mongo Pipeline:")
+        
+        pipeline = ex["pipeline"]
+        if not isinstance(pipeline, str):
+            pipeline = json.dumps(pipeline, ensure_ascii=False)
+        
+        pipeline = escape_braces(pipeline)
+        lines.append(pipeline)
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 class TaskerAgent:
     def __init__(self):
-
+        """Initialize the TaskerAgent with cache and memory"""
+        
+        # Load registry
+        BASE_DIR = Path(__file__).resolve().parents[1]
+        registry_path = BASE_DIR / "registry" / "registry.yaml"
+        
+        if not registry_path.exists():
+            raise FileNotFoundError(f"Registry not found at {registry_path}")
+        
+        self.registry_text = registry_path.read_text(encoding="utf-8")
+        self.registry = yaml.safe_load(self.registry_text)
+        
+        # Create registry hash
+        self.registry_hash = hash_registry(self.registry_text)
+        
+        # Model name for cache/memory
+        self.model_name = "gpt-oss:latest"
+        
+        # Initialize LLM
         self.llm = ChatOpenAI(
-            model="gpt-oss:latest",
+            model=self.model_name,
             base_url=os.getenv("LLM_BASE_URL"),
             api_key=os.getenv("LLM_API_KEY", "dummy"),
             temperature=0
         )
 
-        self.parser = PydanticOutputParser(
-            pydantic_object=TaskCommand
-        )
+        # Token tracking
+        self.last_metrics = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "llm_used": False,
+            "cache_hit": False,
+            "examples_used": 0
+        }
 
-        self.prompt = ChatPromptTemplate.from_messages([
-            (
-                "system",
-                """
-                You are a CMMS Task Interpreter.
+        # System prompt (without experience block placeholder)
+        system_prompt_raw = """
+            You are an expert MongoDB aggregation query generator for a CMMS system.
 
-                Your job is to convert a user's natural language request into a structured JSON
-                command that the CMMS system can execute safely.
+            You are provided with a YAML registry that is the SINGLE SOURCE OF TRUTH.
+            Anything defined in the registry MUST be used exactly as specified.
+            You are NOT allowed to invent, assume, normalize, or infer any field names,
+            enum values, statuses, or constants that are not explicitly present
+            in the registry.
 
-                Resource: {resource}
+            ====================================================
+            YAML REGISTRY (AUTHORITATIVE)
+            ====================================================
+            {registry}
+            ====================================================
 
-                ------------------------------------
-                SUPPORTED RESOURCES
-                ------------------------------------
-                - work_order
-                - asset
-                - pm   (preventive maintenance)
+            CRITICAL OUTPUT CONTRACT (ABSOLUTE):
 
-                ------------------------------------
-                SUPPORTED ACTIONS
-                ------------------------------------
-                - view    → view records (single or many)
-                - create  → create a new record
-                - update  → update an existing record
+            1. You MUST output a JSON ARRAY.
+            2. NEVER output a single JSON object.
+            3. Even for a single stage, wrap it in an array.
+            4. Output MUST be valid JSON only (no markdown, no comments).
 
-                ------------------------------------
-                IMPORTANT RULES
-                ------------------------------------
-                1. DO NOT invent IDs.
-                2. IDs may appear in many formats.
-                3. Convert spoken numbers to numeric form if obvious.
-                4. If a filter is mentioned → include it.
-                5. If nothing is mentioned → return empty filters.
-                6. ALWAYS use action = "view" for read requests.
-                7. Never explain. Always return a best guess.
-                8. If the user asks for fields from another resource (example: asset name in work orders),mark the request as requiring related data.
+            SCHEMA & VALUE ENFORCEMENT (MANDATORY):
 
-                ------------------------------------
-                STATUS NORMALIZATION (WORK ORDERS)
-                ------------------------------------
-                - open, pending         → status = "Open"
-                - closed, completed    → status = "Closed"
-                - in progress, running → status = "In Progress"
+            - You MUST ONLY use:
+            - Fields that exist in the registry
+            - Enum values that exist in the registry
+            
+            - You MUST NOT (IMPORTANT):
+            - Invent domain values (e.g. "Operational", "Running", "Active" unless defined)
+            - Guess or map human-friendly synonyms
+            - Donot hallucinate the responses 
+            - Expand enums beyond what is listed
 
-                ------------------------------------
-                ASSET STATUS NORMALIZATION
-                ------------------------------------
-                - running, active, operational → status = "Running"
-                - stopped, inactive            → status = "Stopped"
-                - maintenance, under repair    → status = "Maintenance"
+            If a user request implies a value that DOES NOT exist in the registry:
+            - DO NOT guess
+            - DO NOT approximate
+            - Instead, fall back to the closest valid registry-safe query
+            (e.g. omit the invalid filter and explain via structure, not text)
 
-                ------------------------------------
-                OUTPUT FORMAT
-                ------------------------------------
-                Return ONLY valid JSON matching this schema:
+            IMPORTANT:
+            - Use normal JSON syntax in your output
+            - Do NOT include angle brackets or symbolic notation
+            - Always return an array
+            - When in doubt, be STRICT and REGISTRY-SAFE
+            - Always add a filter for deleted: false or deleted: {$ne: true} to exclude deleted records
 
-                {format_instructions}
+            IMPORTANT SCHEMA NOTE:
 
-                ------------------------------------
-                EXAMPLES
-                ------------------------------------
-                User: "list open work orders"
-                Output:
-                {{
-                "resource": "work_order",
-                "action": "view",
-                "filters": {{
-                    "status": "Open"
-                }},
-                "confidence": "high"
-                }}
+            - Work order assignment is represented by the `people` field.
+            - The `people` field is an array of user `_id` values.
+            - For queries involving "assigned to", "technician", or "responsible",
+            you MUST use the `people` field.
 
-                User: "show work order 42"
-                Output:
-                {{
-                "resource": "work_order",
-                "action": "view",
-                "filters": {{
-                    "id": "WO-42"
-                }},
-                "confidence": "high"
-                }}
+            ------------------------------------
+            USER REQUEST
+            ------------------------------------
+            {user_input}
 
-                User: "show all assets"
-                Output:
-                {{
-                "resource": "asset",
-                "action": "view",
-                "filters": {{}},
-                "confidence": "high"
-                }}
-
-                User: "give me list of running assets"
-                Output:
-                {{
-                "resource": "asset",
-                "action": "view",
-                "filters": {{
-                    "status": "Running"
-                }},
-                "confidence": "high"
-                }}
-
-                ------------------------------------
-                Now process the user request.
-                """
-            ),
-            ("human", "{input}")
+            ------------------------------------
+            Generate the MongoDB aggregation pipeline now.
+            """
+        
+        # Escape braces, then re-enable placeholders
+        system_prompt_escaped = escape_braces(system_prompt_raw)
+        system_prompt_escaped = system_prompt_escaped.replace("{{registry}}", "{registry}")
+        system_prompt_escaped = system_prompt_escaped.replace("{{user_input}}", "{user_input}")
+        
+        self.base_prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt_escaped)
         ])
+        
+        # Prompt with experience
+        prompt_with_exp = system_prompt_escaped + "\n\n{experience_block}"
+        self.prompt_with_experience = ChatPromptTemplate.from_messages([
+            ("system", prompt_with_exp)
+        ])
+        
+        print(f"DEBUG → TaskerAgent initialized with registry hash: {self.registry_hash[:8]}")
 
-    def run(self, user_input: str, resource: str) -> TaskCommand:
-        chain = self.prompt | self.llm | self.parser
+    def run(self, user_input: str, resource: str = "workorders") -> str:
+        """Generate MongoDB aggregation pipeline from natural language"""
+        
+        start_time = time.time()
+        
+        # 1. Check exact cache first
+        cache_key = make_cache_key(
+            model=self.model_name,
+            query=user_input,
+            registry_hash=self.registry_hash
+        )
+        
+        cached_pipeline = get_cached_pipeline(cache_key)
+        
+        if cached_pipeline:
+            print(f"⚡ CACHE HIT for query: '{user_input[:50]}...'")
+            
+            self.last_metrics = {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "llm_used": False,
+                "cache_hit": True,
+                "examples_used": 0
+            }
+            
+            return cached_pipeline
+        
+        print(f"🔍 CACHE MISS - Checking memory for similar queries...")
+        
+        # 2. Retrieve similar queries from memory
+        examples = retrieve_similar_queries(
+            user_query=user_input,
+            registry_text=self.registry_text,
+            model=self.model_name,
+            top_k=3
+        )
+        
+        examples_used = len(examples)
+        
+        if examples_used > 0:
+            print(f"💡 Found {examples_used} similar past queries to guide generation")
+        
+        try:
+            escaped_registry = escape_braces(self.registry_text)
+            
+            # Choose prompt based on whether we have examples
+            if examples:
+                experience_block = build_experience_block(examples)
+                formatted_prompt = self.prompt_with_experience.format_messages(
+                    registry=escaped_registry,
+                    user_input=user_input,
+                    experience_block=experience_block
+                )
+            else:
+                formatted_prompt = self.base_prompt.format_messages(
+                    registry=escaped_registry,
+                    user_input=user_input
+                )
 
-        command: TaskCommand = chain.invoke({
-            "input": user_input,
-            "resource": resource,
-            "format_instructions": self.parser.get_format_instructions()
-        })
-
-        # -----------------------------
-        # Regex fallback (SAFE)
-        # -----------------------------
-        if (
-            command.resource == "work_order"
-            and command.action == "view"
-            and not command.filters.id
-        ):
-            match = re.search(r"\bWO[-\s]?(\d+)\b", user_input, re.IGNORECASE)
-            if match:
-                command.filters.id = f"WO-{match.group(1)}"
-
-        if (
-            command.resource == "asset"
-            and command.action == "view"
-            and not command.filters.id
-        ):
-            match = re.search(r"\basset\s+([\w\- ]+)\b", user_input, re.IGNORECASE)
-            if match:
-                command.filters.id = match.group(1).strip()
-
-        if (
-            command.resource == "pm"
-            and command.action == "view"
-            and not command.filters.id
-        ):
-            match = re.search(r"\bPM[-\s]?(\d+)\b", user_input, re.IGNORECASE)
-            if match:
-                command.filters.id = f"PM-{match.group(1)}"
-
-        # if (command.action == "list"):
-        #     command.action = "view"
-
-        print("DEBUG → TaskCommand:", command.model_dump())
-        return command
+            # Estimate prompt tokens
+            prompt_text = formatted_prompt[0].content if formatted_prompt else ""
+            prompt_tokens = estimate_tokens(prompt_text)
+            
+            # Call LLM
+            response = self.llm.invoke(formatted_prompt)
+            pipeline_text = response.content.strip()
+            
+            # Estimate completion tokens
+            completion_tokens = estimate_tokens(pipeline_text)
+            total_tokens = prompt_tokens + completion_tokens
+            
+            execution_time_ms = int((time.time() - start_time) * 1000)
+            
+            # Store metrics
+            self.last_metrics = {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+                "llm_used": True,
+                "cache_hit": False,
+                "examples_used": examples_used
+            }
+            
+            print(f"DEBUG → Token Usage (est): ~{total_tokens} tokens "
+                  f"(prompt: ~{prompt_tokens}, completion: ~{completion_tokens})")
+            
+            # Remove markdown code blocks if present
+            if pipeline_text.startswith("```"):
+                lines = pipeline_text.split("\n")
+                pipeline_text = "\n".join(lines[1:-1]) if len(lines) > 2 else pipeline_text
+                pipeline_text = pipeline_text.strip()
+            
+            # Validate JSON
+            try:
+                pipeline = json.loads(pipeline_text)
+                if isinstance(pipeline, dict):
+                    pipeline = [pipeline]
+                
+                if not pipeline or len(pipeline) == 0:
+                    pipeline = [{"$match": {"deleted": {"$ne": True}}}]
+                
+                if len(pipeline) == 1 and pipeline[0].get("$match") == {}:
+                    pipeline[0]["$match"] = {"deleted": {"$ne": True}}
+                
+                pipeline_text = json.dumps(pipeline, ensure_ascii=False)
+                
+            except json.JSONDecodeError as e:
+                print(f"DEBUG → JSON validation failed: {e}")
+                print(f"DEBUG → Raw pipeline: {pipeline_text}")
+                pipeline_text = '[{"$match": {"deleted": {"$ne": true}}}]'
+            
+            # 3. Cache the successful result
+            set_cached_pipeline(cache_key, pipeline_text)
+            print(f"💾 Cached pipeline for future use")
+            
+            # 4. Store in memory for future similar queries
+            try:
+                store_query_memory(
+                    user_query=user_input,
+                    resource=resource,
+                    pipeline=pipeline_text,
+                    model=self.model_name,
+                    registry_text=self.registry_text,
+                    execution_time_ms=execution_time_ms
+                )
+                print(f"🧠 Stored in memory for learning")
+            except Exception as e:
+                print(f"⚠️ Failed to store in memory: {e}")
+            
+            print("DEBUG → Generated Pipeline:", pipeline_text)
+            return pipeline_text
+            
+        except Exception as e:
+            print(f"❌ TaskerAgent Error: {type(e).__name__}: {e}")
+            
+            # Reset metrics for fallback
+            self.last_metrics = {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "llm_used": False,
+                "cache_hit": False,
+                "examples_used": 0
+            }
+            
+            fallback = '[{"$match": {"deleted": {"$ne": true}}}]'
+            
+            # Cache the fallback too
+            set_cached_pipeline(cache_key, fallback)
+            
+            return fallback
+    
+    def get_metrics(self) -> dict:
+        """Get the metrics from the last run"""
+        return self.last_metrics.copy()

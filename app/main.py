@@ -4,10 +4,12 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from contextlib import asynccontextmanager
 import yaml
+import time
+import traceback
 
 from app.agents.chatbot import ChatbotAgent
 from app.agents.tasker import TaskerAgent
-from app.agents.executers import execute_action
+from app.agents.executers import ActionExecutor
 
 from app.models.schemas import ChatRequest, ChatResponse
 from app.orchestration.router import route_intent, Intent
@@ -22,6 +24,8 @@ from app.policy.engine import Resource
 from app.models.models_list import get_model
 from app.core.llm_warmup import warmup_llm
 from app.db.mongodb import get_db
+from app.core.logging import logger
+
 
 # -------------------- DB --------------------
 db = get_db()
@@ -29,8 +33,11 @@ db = get_db()
 # -------------------- App Lifespan --------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    logger.info("Starting CMMS AI application")
     warmup_llm()
+    logger.info("LLM warmup completed")
     yield
+    logger.info("Shutting down CMMS AI application")
 
 app = FastAPI(lifespan=lifespan)
 
@@ -52,16 +59,19 @@ def health():
     return {"status": "ok"}
 
 # -------------------- Registry --------------------
-REGISTRY_PATH = BASE_DIR / "registry" / "resources.yaml"
+# We only have registry.yaml (MongoDB schema), not resources.yaml
+REGISTRY_PATH = BASE_DIR / "registry" / "registry.yaml"
 
 if not REGISTRY_PATH.exists():
-    raise RuntimeError("Resource registry YAML not found")
+    raise RuntimeError("Registry YAML not found")
 
 with open(REGISTRY_PATH, "r", encoding="utf-8") as f:
     registry = yaml.safe_load(f)
 
-if not registry or not isinstance(registry, dict):
-    raise RuntimeError("Invalid resource registry format")
+if not registry or "collections" not in registry:
+    raise RuntimeError("Invalid registry format - missing 'collections'")
+
+logger.info(f"Loaded registry with collections: {list(registry.get('collections', {}).keys())}")
 
 # -------------------- Models --------------------
 chat_model = get_model(
@@ -71,6 +81,28 @@ chat_model = get_model(
 
 chatbot = ChatbotAgent(chat_model)
 tasker = TaskerAgent()
+executor = ActionExecutor()
+
+# -------------------- Helper Functions --------------------
+def get_collection_name(resource: Resource) -> str:
+    """Map Resource enum to MongoDB collection name"""
+    mapping = {
+        Resource.WORK_ORDER: "workorders",
+        Resource.ASSET: "assets",
+        Resource.PM: "preventiveMaintenance",
+    }
+    return mapping.get(resource, "workorders")
+
+
+def get_resource_key(resource: Resource) -> str:
+    """Map Resource enum to registry resource key"""
+    mapping = {
+        Resource.WORK_ORDER: "work_orders",  # Plural in registry
+        Resource.ASSET: "assets",  # Plural in registry
+        Resource.PM: "preventive_maintenance",  # Full name in registry
+    }
+    return mapping.get(resource, "work_orders")
+
 
 # -------------------- Chat Route --------------------
 @app.post("/chat", response_model=ChatResponse)
@@ -79,10 +111,14 @@ def chat(request: ChatRequest):
     user_message = request.message
     user_context = request.user
 
+    logger.info("Incoming chat request")
+    logger.debug(f"User message: {user_message}")
+
     # 1️⃣ Intent detection
     intent = route_intent(user_message)
+    logger.info(f"Detected intent: {intent}")
 
-    # 2️⃣ Policy check (intent + role + text)
+    # 2️⃣ Policy check
     policy_result = evaluate_policy(
         intent=intent,
         user_context=user_context,
@@ -90,40 +126,90 @@ def chat(request: ChatRequest):
     )
 
     if policy_result.decision in {PolicyDecision.BLOCK, PolicyDecision.CLARIFY}:
+        logger.warning(
+            f"Policy decision: {policy_result.decision} | Reason: {policy_result.reason}"
+        )
         return {"response": policy_result.reason}
 
     # 3️⃣ Pure chat
     if intent == Intent.CHAT:
-        response = chatbot.run(user_message)
-        return {"response": response}
+        logger.info("Handling pure chat intent")
+        return {"response": chatbot.run(user_message)}
 
-    # 4️⃣ Task execution flow
+    # 4️⃣ Task execution
     if intent == Intent.EXECUTE_TASK:
+        logger.info("Handling task execution intent")
 
-        # Resolve resource ONCE
-        resource_enum = resolve_resource(user_message)
-        resource = resource_enum.value
+        start_time = time.perf_counter()
 
-        # 4.1 Task interpretation (LLM)
-        task = tasker.run(user_message, resource)
+        try:
+            # Step 1: Resolve resource from user input
+            resource_enum = resolve_resource(user_message)
+            logger.info(f"Resolved resource: {resource_enum}")
+            
+            # Step 2: Get mappings
+            resource_key = get_resource_key(resource_enum)
+            collection_name = get_collection_name(resource_enum)
+            
+            logger.info(f"Mapped to resource_key: {resource_key}, collection: {collection_name}")
+            
+            # Step 3: Generate MongoDB pipeline using TaskerAgent
+            pipeline_text = tasker.run(user_input=user_message, resource=collection_name)
+            logger.info(f"Generated pipeline: {pipeline_text}")
 
-        # 4.2 Use TaskCommand directly
-        action = Action(task.action)
-        resource = Resource(task.resource)
+            # 🔒 Read-only enforced
+            action = Action.VIEW
+            action_key = action.value
 
-        # 4.3 Extract filters
-        params = task.filters.model_dump(exclude_none=True)
+            # Step 4: Execute query using ActionExecutor
+            logger.info(f"Calling ActionExecutor with:")
+            logger.info(f"  - collection_name: {collection_name}")
+            logger.info(f"  - resource_key: {resource_key}")
+            logger.info(f"  - action_key: {action_key}")
+            
+            result = executor.execute_action(
+                db=db,
+                registry=registry.get("collections", {}),  # Pass collections, not resources
+                collection_name=collection_name,
+                pipeline_text=pipeline_text,
+                resource_key=None,  # Don't pass resource_key since we don't have resources.yaml
+                action_key=None,  # Don't pass action_key
+                limit=20
+            )
 
-        # 4.4 Execute
-        result = execute_action(
-            db=db,
-            registry=registry,
-            action=action,
-            resource=resource,
-            params=params,
-       
-        )
+            # Get token metrics from tasker
+            metrics = tasker.get_metrics()
 
-        return {"response": result}
+            logger.info(
+                "Task execution completed | "
+                # f"time={total_time}s | "
+                f"collection={collection_name} | "
+                f"resource={resource_key} | "
+                f"result_length={len(result)} chars | "
+                f"tokens={metrics.get('total_tokens', 0)} | "
+                f"llm_used={metrics.get('llm_used', False)} | "
+                f"cache_hit={metrics.get('cache_hit', False)} | "
+                f"examples={metrics.get('examples_used', 0)}"
+            )
 
-    return {"response": "Unsupported intent"}
+            if not result or result.startswith("❌"):
+                logger.warning(f"Execution returned error or empty: {result[:100]}")
+            
+            # # Add metrics footer to response
+            # if metrics.get('cache_hit'):
+            #     result += f"\n\n⚡ Query retrieved from cache in {total_time}s"
+            # elif metrics.get('llm_used'):
+            #     examples_info = f" (guided by {metrics['examples_used']} past examples)" if metrics.get('examples_used', 0) > 0 else ""
+            #     result += f"\n\n💡 Query generated in {total_time}s using ~{metrics['total_tokens']} tokens{examples_info}"
+            # else:
+            #     result += f"\n\n💡 Query completed in {total_time}s (using fallback)"
+            
+            return {"response": result}
+
+        except Exception as e:
+            logger.error(f"Task execution failed: {type(e).__name__}: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return {"response": f"❌ Error: Unable to process your request. {str(e)}"}
+
+    logger.error("Unsupported intent encountered")
+    return {"response": "❌ Unsupported intent"}

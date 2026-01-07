@@ -1,0 +1,195 @@
+registry_version: 1.0
+authority: strict
+
+collections:
+
+  companies:
+    fields:
+      _id: { type: ObjectId }
+      name: { type: String }
+      location: { type: String }
+      companyContactPerson: { type: String }
+      companyPhoneNumber: { type: String }
+      companyWebsite: { type: String }
+      createdAt: { type: Date }
+      updatedAt: { type: Date }
+      deleted: { type: Boolean }
+
+  plants:
+    fields:
+      _id: { type: ObjectId }
+      name: { type: String }
+      location: { type: String }
+      companyId:
+        type: ObjectId
+        references: companies._id
+      plantCode: { type: Number }
+      createdAt: { type: Date }
+      updatedAt: { type: Date }
+      deleted: { type: Boolean }
+
+  users:
+    fields:
+      _id: { type: ObjectId }
+      firstName: { type: String }
+      lastName: { type: String }
+      email: { type: String }
+      phoneNumber: { type: String }
+      companyId:
+        type: ObjectId
+        references: companies._id
+      plantId:
+        type: ObjectId
+        references: plants._id
+      department: { type: String }
+      role: { type: String }
+      status: { type: String }
+      lastLogin: { type: Date }
+      createdAt: { type: Date }
+      updatedAt: { type: Date }
+      deleted: { type: Boolean }
+
+  assets:
+    fields:
+      _id: { type: ObjectId }
+      companyId:
+        type: ObjectId
+        references: companies._id
+      plant:
+        type: ObjectId
+        references: plants._id
+      name: { type: String }
+      description: { type: String }
+      typeOfAsset: { type: String }
+      modelOfAsset: { type: String }
+      manufacturer: { type: String }
+      serialNumber: { type: String }
+      assetStatus:
+        type: enum
+        canonical_values:
+          - Operational
+          - Maintenance
+          - Breakdown
+          - Inactive
+        accepted_synonyms:
+          operational: Operational
+          running: Operational
+          maintenance: Maintenance
+          under maintenance: Maintenance
+          breakdown: Breakdown
+          inactive: Inactive
+      isProductionAsset: { type: Boolean }
+      installationDate: { type: Date }
+      warrantyExpiryDate: { type: Date }
+      parentAsset:
+        type: ObjectId
+        references: assets._id
+      createdAt: { type: Date }
+      updatedAt: { type: Date }
+      deleted: { type: Boolean }
+
+  spareparts:
+    fields:
+      _id: { type: ObjectId }
+      companyId:
+        type: ObjectId
+        references: companies._id
+      plant:
+        type: ObjectId
+        references: plants._id
+      name: { type: String }
+      description: { type: String }
+      partVariant: { type: String }
+      modelOfSparePart: { type: String }
+      manufacturer: { type: String }
+      assignedAsset:
+        type: ObjectId
+        references: assets._id
+      stockQuantity: { type: Number }
+      minimumQuantity: { type: Number }
+      criticality: { type: String }
+      createdBy:
+        type: ObjectId
+        references: users._id
+      createdAt: { type: Date }
+      updatedAt: { type: Date }
+      deleted: { type: Boolean }
+
+  preventiveMaintenance:
+    fields:
+      _id: { type: ObjectId }
+      preventiveMaintenanceId: { type: String }
+      name: { type: String }
+      description: { type: String }
+      assetAllocation:
+        type: ObjectId
+        references: assets._id
+      plantId:
+        type: ObjectId
+        references: plants._id
+      companyId:
+        type: ObjectId
+        references: companies._id
+      createdBy:
+        type: ObjectId
+        references: users._id
+      lastMaintenanceDate: { type: Date }
+      nextGenerationDate: { type: Date }
+      createdAt: { type: Date }
+      updatedAt: { type: Date }
+      deleted: { type: Boolean }
+
+  workorders:
+    fields:
+      _id: { type: ObjectId }
+      workOrderId: { type: String }
+      name: { type: String }
+      description: { type: String }
+      asset:
+        type: ObjectId
+        references: assets._id
+      priority: { type: String }
+
+      workStatus:
+        type: enum
+        canonical_values:
+          - Open
+          - In Progress
+          - Closed
+          - Cancelled
+        accepted_synonyms:
+          running: In Progress
+          in progress: In Progress
+          open: Open
+          closed: Closed
+          completed: Closed
+          cancelled: Cancelled
+
+      category: { type: String }
+      companyId:
+        type: ObjectId
+        references: companies._id
+      plantId:
+        type: ObjectId
+        references: plants._id
+      pmId:
+        type: ObjectId
+        references: preventiveMaintenance._id
+      lastModifiedBy:
+        type: ObjectId
+        references: users._id
+
+      people:
+        type: array
+        items: ObjectId
+        references: users._id
+        semantics: assignees
+        description: >
+          List of users assigned to the work order.
+          Used for queries like "assigned to",
+          "technician", "responsible person".
+          
+      dueDate: { type: Date }
+      createdAt: { type: Date }
+      updatedAt: { type: Date }
+      deleted: { type: Boolean }
