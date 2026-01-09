@@ -8,11 +8,8 @@ from typing import Optional
 # Vector memory (experience replay)
 # -----------------------------------------
 
-client = chromadb.Client(
-    Settings(
-        persist_directory="./query_memory_chroma",
-        anonymized_telemetry=False
-    )
+client = chromadb.PersistentClient(
+    path="./query_memory_chroma"
 )
 
 collection = client.get_or_create_collection(
@@ -56,25 +53,31 @@ def store_query_memory(
     normalized = normalize_query(user_query)
     registry_hash = hash_registry(registry_text)
 
-    collection.add(
-        documents=[normalized],
-        metadatas=[{
-            "resource": resource,
-            "pipeline": pipeline,
-            "model": model,
-            "registry_hash": registry_hash,
-            "execution_time_ms": execution_time_ms,
-            "created_at": datetime.utcnow().isoformat(),
-            "status": "success",   # 🔒 only store good examples
-        }],
-        ids=[make_memory_id(
-            query=user_query,
-            model=model,
-            registry_hash=registry_hash,
-        )],
-    )
-
-    client.persist()
+    try:
+        collection.add(
+            documents=[normalized],
+            metadatas=[{
+                "resource": resource,
+                "pipeline": pipeline,
+                "model": model,
+                "registry_hash": registry_hash,
+                "execution_time_ms": str(execution_time_ms) if execution_time_ms else "0",
+                "created_at": datetime.utcnow().isoformat(),
+                "status": "success",
+            }],
+            ids=[make_memory_id(
+                query=user_query,
+                model=model,
+                registry_hash=registry_hash,
+            )],
+        )
+        print(f"✅ Successfully stored query in memory")
+    except Exception as e:
+        # Handle duplicate IDs gracefully
+        if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
+            print(f"ℹ️ Query already exists in memory")
+        else:
+            raise
 
 # -----------------------------------------
 # Retrieve similar (SAFE FILTERING)
@@ -102,21 +105,54 @@ def retrieve_similar_queries(
         "$and": conditions
     }
 
-    results = collection.query(
-        query_texts=[normalized],
-        n_results=top_k,
-        where=where_filter,
-    )
+    try:
+        results = collection.query(
+            query_texts=[normalized],
+            n_results=top_k,
+            where=where_filter,
+        )
 
-    examples = []
+        examples = []
 
-    if results and results.get("documents"):
-        for i in range(len(results["documents"][0])):
-            meta = results["metadatas"][0][i]
-            examples.append({
-                "user_query": results["documents"][0][i],
-                "pipeline": meta["pipeline"],
-                "execution_time_ms": meta.get("execution_time_ms"),
-            })
+        if results and results.get("documents"):
+            for i in range(len(results["documents"][0])):
+                meta = results["metadatas"][0][i]
+                examples.append({
+                    "user_query": results["documents"][0][i],
+                    "pipeline": meta["pipeline"],
+                    "execution_time_ms": meta.get("execution_time_ms"),
+                })
 
-    return examples
+        return examples
+    except Exception as e:
+        print(f"⚠️ Error querying memory: {e}")
+        return []
+
+
+# -----------------------------------------
+# Utility functions
+# -----------------------------------------
+
+def get_memory_stats() -> dict:
+    """Get statistics about the memory collection"""
+    try:
+        count = collection.count()
+        return {
+            "total_queries": count,
+            "collection_name": collection.name
+        }
+    except Exception as e:
+        return {
+            "error": str(e)
+        }
+
+
+def clear_memory():
+    """Clear all stored queries"""
+    try:
+        client.delete_collection(name="cmms_query_memory")
+        global collection
+        collection = client.get_or_create_collection(name="cmms_query_memory")
+        print("🗑️ Memory cleared successfully")
+    except Exception as e:
+        print(f"❌ Error clearing memory: {e}")

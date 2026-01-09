@@ -101,67 +101,112 @@ class TaskerAgent:
 
         # System prompt (without experience block placeholder)
         system_prompt_raw = """
-            You are an expert MongoDB aggregation query generator for a CMMS system.
+You are an expert MongoDB aggregation query generator for a CMMS system.
 
-            You are provided with a YAML registry that is the SINGLE SOURCE OF TRUTH.
-            Anything defined in the registry MUST be used exactly as specified.
-            You are NOT allowed to invent, assume, normalize, or infer any field names,
-            enum values, statuses, or constants that are not explicitly present
-            in the registry.
+You are provided with a YAML registry that is the SINGLE SOURCE OF TRUTH.
+Anything defined in the registry MUST be used exactly as specified.
+You are NOT allowed to invent, assume, normalize, or infer any field names,
+enum values, statuses, or constants that are not explicitly present
+in the registry.
 
-            ====================================================
-            YAML REGISTRY (AUTHORITATIVE)
-            ====================================================
-            {registry}
-            ====================================================
+====================================================
+YAML REGISTRY (AUTHORITATIVE)
+====================================================
+{registry}
+====================================================
 
-            CRITICAL OUTPUT CONTRACT (ABSOLUTE):
+CRITICAL OUTPUT CONTRACT (ABSOLUTE):
 
-            1. You MUST output a JSON ARRAY.
-            2. NEVER output a single JSON object.
-            3. Even for a single stage, wrap it in an array.
-            4. Output MUST be valid JSON only (no markdown, no comments).
+1. You MUST output a JSON ARRAY.
+2. NEVER output a single JSON object.
+3. Even for a single stage, wrap it in an array.
+4. Output MUST be valid JSON only (no markdown, no comments).
 
-            SCHEMA & VALUE ENFORCEMENT (MANDATORY):
+SCHEMA & VALUE ENFORCEMENT (MANDATORY):
 
-            - You MUST ONLY use:
-            - Fields that exist in the registry
-            - Enum values that exist in the registry
-            
-            - You MUST NOT (IMPORTANT):
-            - Invent domain values (e.g. "Operational", "Running", "Active" unless defined)
-            - Guess or map human-friendly synonyms
-            - Donot hallucinate the responses 
-            - Expand enums beyond what is listed
+- You MUST ONLY use:
+  - Fields that exist in the registry
+  - Enum values that exist in the registry
+- You MUST NOT:
+  - Invent domain values (e.g. "Operational", "Running", "Active" unless defined)
+  - Guess or map human-friendly synonyms
+  - Expand enums beyond what is listed
 
-            If a user request implies a value that DOES NOT exist in the registry:
-            - DO NOT guess
-            - DO NOT approximate
-            - Instead, fall back to the closest valid registry-safe query
-            (e.g. omit the invalid filter and explain via structure, not text)
+If a user request implies a value that DOES NOT exist in the registry:
+- DO NOT guess
+- DO NOT approximate
+- Instead, fall back to the closest valid registry-safe query
+  (e.g. omit the invalid filter and explain via structure, not text)
 
-            IMPORTANT:
-            - Use normal JSON syntax in your output
-            - Do NOT include angle brackets or symbolic notation
-            - Always return an array
-            - When in doubt, be STRICT and REGISTRY-SAFE
-            - Always add a filter for deleted: false or deleted: {$ne: true} to exclude deleted records
+IMPORTANT:
+- Use normal JSON syntax in your output
+- Do NOT include angle brackets or symbolic notation
+- Always return an array
+- When in doubt, be STRICT and REGISTRY-SAFE
+- Always add a filter for deleted: false or deleted: {$ne: true} to exclude deleted records
 
-            IMPORTANT SCHEMA NOTE:
+IMPORTANT SCHEMA NOTE:
 
-            - Work order assignment is represented by the `people` field.
-            - The `people` field is an array of user `_id` values.
-            - For queries involving "assigned to", "technician", or "responsible",
-            you MUST use the `people` field.
+- Work order assignment is represented by the `people` field.
+- The `people` field is an array of user `_id` values.
+- For queries involving "assigned to", "technician", or "responsible",
+  you MUST use the `people` field.
 
-            ------------------------------------
-            USER REQUEST
-            ------------------------------------
-            {user_input}
+[{"$match": {"deleted": {"$ne": true}}}]
+```
 
-            ------------------------------------
-            Generate the MongoDB aggregation pipeline now.
-            """
+Which returns ALL non-deleted PMs instead of just upcoming ones.
+
+## The Fix:
+
+Your pipeline generation prompt needs to tell the LLM to use MongoDB's date operators, not JavaScript `new Date()`.
+
+**Add this to your pipeline generation prompt:**
+```
+CRITICAL: Date Handling in MongoDB Pipelines
+
+When comparing dates in MongoDB aggregation pipelines:
+- DO NOT use `new Date()` - this is invalid JSON
+- USE MongoDB aggregation expressions for current date:
+  - For match stage: Use `$$NOW` system variable
+  - Or use ISODate string format: "2026-01-09T00:00:00.000Z"
+
+Examples:
+
+❌ WRONG (invalid JSON):
+{"nextGenerationDate": {"$gte": new Date()}}
+
+✅ CORRECT (using $$NOW):
+{
+  "$expr": {
+    "$gte": ["$nextGenerationDate", "$$NOW"]
+  }
+}
+
+✅ CORRECT (using date comparison with current date as string):
+For "upcoming" queries, generate the current date as an ISO string in the pipeline.
+
+For preventive maintenance "upcoming" queries specifically:
+[
+  {
+    "$match": {
+      "deleted": false,
+      "$expr": {
+        "$gte": ["$nextGenerationDate", "$$NOW"]
+      }
+    }
+  },
+  { "$sort": { "nextGenerationDate": 1 } }
+]
+
+------------------------------------
+USER REQUEST
+------------------------------------
+{user_input}
+
+------------------------------------
+Generate the MongoDB aggregation pipeline now.
+"""
         
         # Escape braces, then re-enable placeholders
         system_prompt_escaped = escape_braces(system_prompt_raw)
@@ -273,7 +318,7 @@ class TaskerAgent:
                 pipeline_text = "\n".join(lines[1:-1]) if len(lines) > 2 else pipeline_text
                 pipeline_text = pipeline_text.strip()
             
-            # Validate JSON
+            # Validate JSON and ensure deleted filter
             try:
                 pipeline = json.loads(pipeline_text)
                 if isinstance(pipeline, dict):
@@ -282,10 +327,32 @@ class TaskerAgent:
                 if not pipeline or len(pipeline) == 0:
                     pipeline = [{"$match": {"deleted": {"$ne": True}}}]
                 
-                if len(pipeline) == 1 and pipeline[0].get("$match") == {}:
-                    pipeline[0]["$match"] = {"deleted": {"$ne": True}}
+                # Ensure deleted filter is in the first $match stage
+                has_deleted_filter = False
+                for stage in pipeline:
+                    if "$match" in stage:
+                        match_stage = stage["$match"]
+                        if "deleted" in match_stage:
+                            has_deleted_filter = True
+                            # Ensure it filters out deleted records
+                            if match_stage["deleted"] not in [False, {"$ne": True}, {"$eq": False}]:
+                                match_stage["deleted"] = {"$ne": True}
+                        break
+                
+                # If no deleted filter exists, add it to first $match or create new $match
+                if not has_deleted_filter:
+                    for stage in pipeline:
+                        if "$match" in stage:
+                            stage["$match"]["deleted"] = {"$ne": True}
+                            has_deleted_filter = True
+                            break
+                    
+                    # If still no $match stage, add one at the beginning
+                    if not has_deleted_filter:
+                        pipeline.insert(0, {"$match": {"deleted": {"$ne": True}}})
                 
                 pipeline_text = json.dumps(pipeline, ensure_ascii=False)
+                print(f"DEBUG → Ensured deleted filter in pipeline")
                 
             except json.JSONDecodeError as e:
                 print(f"DEBUG → JSON validation failed: {e}")
@@ -306,7 +373,6 @@ class TaskerAgent:
                     registry_text=self.registry_text,
                     execution_time_ms=execution_time_ms
                 )
-                print(f"🧠 Stored in memory for learning")
             except Exception as e:
                 print(f"⚠️ Failed to store in memory: {e}")
             

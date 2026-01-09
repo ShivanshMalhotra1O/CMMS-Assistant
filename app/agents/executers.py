@@ -27,9 +27,13 @@ class ActionExecutor:
         elif isinstance(value, list):
             if not value:
                 return "None"
-            return ", ".join(str(v) for v in value)
+            # If it's a list of ObjectIds, just show count
+            if all(isinstance(v, ObjectId) for v in value):
+                return f"[{len(value)} items]"
+            return ", ".join(str(v) for v in value[:3]) + (f" ... (+{len(value)-3} more)" if len(value) > 3 else "")
         elif isinstance(value, dict):
-            return str(value)
+            # Show dict in a more readable way
+            return f"[{len(value)} fields]"
         else:
             return str(value)
     
@@ -112,11 +116,19 @@ class ActionExecutor:
         try:
             print(f"DEBUG → Formatting {len(result)} results")
             
+            # Filter out deleted records in the formatter as a safety net
+            result = [r for r in result if not r.get('deleted', False)]
+            
+            if not result:
+                return "❌ No active records found (all records are deleted)."
+            
+            print(f"DEBUG → After filtering deleted: {len(result)} active results")
+            
             # Define which fields to show based on collection
             field_priority = {
                 "workorders": ["workOrderId", "name", "description", "workStatus", "priority", "dueDate", "createdAt"],
-                "assets": ["name", "description", "assetStatus", "typeOfAsset", "manufacturer", "serialNumber"],
-                "preventiveMaintenance": ["preventiveMaintenanceId", "name", "description", "lastMaintenanceDate", "nextGenerationDate"],
+                "assets": ["name", "description", "assetStatus", "typeOfAsset", "manufacturer", "serialNumber", "installationDate"],
+                "preventiveMaintenance": ["preventiveMaintenanceId", "name", "description", "lastMaintenanceDate", "nextGenerationDate", "createdAt"],
             }
             
             priority_fields = field_priority.get(collection_name, [])

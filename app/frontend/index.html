@@ -306,6 +306,7 @@
       messages.appendChild(userMsg);
       
       input.value = "";
+      input.disabled = true; // Disable input while processing
       messages.scrollTop = messages.scrollHeight;
 
       // Show loading
@@ -326,22 +327,34 @@
       };
 
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+        
         const response = await fetch("/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
+          body: JSON.stringify(payload),
+          signal: controller.signal
         });
 
+        clearTimeout(timeoutId);
         const data = await response.json();
 
         // Remove loading
         messages.removeChild(loadingMsg);
 
-        // Bot message
+        // Bot message - truncate if too long
+        let responseText = data.response;
+        const maxLength = 50000; // Limit response length
+        
+        if (responseText.length > maxLength) {
+          responseText = responseText.substring(0, maxLength) + "\n\n... (response truncated for performance)";
+        }
+
         const botMsg = document.createElement('div');
         botMsg.className = 'message bot';
         botMsg.innerHTML = `
-          <div class="message-content">${escapeHtml(data.response)}</div>
+          <div class="message-content">${escapeHtml(responseText)}</div>
           <div class="timestamp">${timestamp}</div>
         `;
         messages.appendChild(botMsg);
@@ -351,11 +364,20 @@
         
         const errorMsg = document.createElement('div');
         errorMsg.className = 'message bot';
+        let errorText = "❌ Error connecting to server. Please try again.";
+        
+        if (error.name === 'AbortError') {
+          errorText = "⏱️ Request timed out. The query might be too complex. Please try a simpler query.";
+        }
+        
         errorMsg.innerHTML = `
-          <div class="message-content">❌ Error connecting to server. Please try again.</div>
+          <div class="message-content">${errorText}</div>
           <div class="timestamp">${timestamp}</div>
         `;
         messages.appendChild(errorMsg);
+      } finally {
+        input.disabled = false; // Re-enable input
+        input.focus();
       }
 
       messages.scrollTop = messages.scrollHeight;

@@ -67,13 +67,12 @@ collections:
       assetStatus:
         type: enum
         canonical_values:
-          - Operational
+          - Running
           - Maintenance
           - Breakdown
           - Inactive
         accepted_synonyms:
-          operational: Operational
-          running: Operational
+          running: Running
           maintenance: Maintenance
           under maintenance: Maintenance
           breakdown: Breakdown
@@ -115,7 +114,7 @@ collections:
       updatedAt: { type: Date }
       deleted: { type: Boolean }
 
-  preventiveMaintenance:
+  preventivemaintenances:
     fields:
       _id: { type: ObjectId }
       preventiveMaintenanceId: { type: String }
@@ -134,7 +133,14 @@ collections:
         type: ObjectId
         references: users._id
       lastMaintenanceDate: { type: Date }
-      nextGenerationDate: { type: Date }
+      nextGenerationDate:
+        type: Date
+        semantics: schedule_date
+        description: >
+          Date when the next PM work order should be generated.
+          For "upcoming" queries: nextGenerationDate >= current_date
+          For "overdue" queries: nextGenerationDate < current_date
+          For "due soon": nextGenerationDate between now and +7 days
       createdAt: { type: Date }
       updatedAt: { type: Date }
       deleted: { type: Boolean }

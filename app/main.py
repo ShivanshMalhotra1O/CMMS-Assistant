@@ -27,10 +27,8 @@ from app.db.mongodb import get_db
 from app.core.logging import logger
 
 
-# -------------------- DB --------------------
 db = get_db()
 
-# -------------------- App Lifespan --------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting CMMS AI application")
@@ -41,7 +39,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# -------------------- Frontend --------------------
 BASE_DIR = Path(__file__).resolve().parent
 
 app.mount(
@@ -58,8 +55,7 @@ def root():
 def health():
     return {"status": "ok"}
 
-# -------------------- Registry --------------------
-# We only have registry.yaml (MongoDB schema), not resources.yaml
+# Load registry.yaml
 REGISTRY_PATH = BASE_DIR / "registry" / "registry.yaml"
 
 if not REGISTRY_PATH.exists():
@@ -73,7 +69,6 @@ if not registry or "collections" not in registry:
 
 logger.info(f"Loaded registry with collections: {list(registry.get('collections', {}).keys())}")
 
-# -------------------- Models --------------------
 chat_model = get_model(
     provider="local_host",
     model_name="qwen2.5:7b"
@@ -83,13 +78,13 @@ chatbot = ChatbotAgent(chat_model)
 tasker = TaskerAgent()
 executor = ActionExecutor()
 
-# -------------------- Helper Functions --------------------
+
 def get_collection_name(resource: Resource) -> str:
-    """Map Resource enum to MongoDB collection name"""
+    """Map Resource enum to MongoDB collection name (camelCase)"""
     mapping = {
         Resource.WORK_ORDER: "workorders",
         Resource.ASSET: "assets",
-        Resource.PM: "preventiveMaintenance",
+        Resource.PM: "preventivemaintenances",
     }
     return mapping.get(resource, "workorders")
 
@@ -97,14 +92,13 @@ def get_collection_name(resource: Resource) -> str:
 def get_resource_key(resource: Resource) -> str:
     """Map Resource enum to registry resource key"""
     mapping = {
-        Resource.WORK_ORDER: "work_orders",  # Plural in registry
-        Resource.ASSET: "assets",  # Plural in registry
-        Resource.PM: "preventive_maintenance",  # Full name in registry
+        Resource.WORK_ORDER: "work_orders",
+        Resource.ASSET: "assets",
+        Resource.PM: "preventive_maintenance",
     }
     return mapping.get(resource, "work_orders")
 
 
-# -------------------- Chat Route --------------------
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
 
@@ -114,11 +108,9 @@ def chat(request: ChatRequest):
     logger.info("Incoming chat request")
     logger.debug(f"User message: {user_message}")
 
-    # 1️⃣ Intent detection
     intent = route_intent(user_message)
     logger.info(f"Detected intent: {intent}")
 
-    # 2️⃣ Policy check
     policy_result = evaluate_policy(
         intent=intent,
         user_context=user_context,
@@ -131,37 +123,30 @@ def chat(request: ChatRequest):
         )
         return {"response": policy_result.reason}
 
-    # 3️⃣ Pure chat
     if intent == Intent.CHAT:
         logger.info("Handling pure chat intent")
         return {"response": chatbot.run(user_message)}
 
-    # 4️⃣ Task execution
     if intent == Intent.EXECUTE_TASK:
         logger.info("Handling task execution intent")
 
         start_time = time.perf_counter()
 
         try:
-            # Step 1: Resolve resource from user input
             resource_enum = resolve_resource(user_message)
             logger.info(f"Resolved resource: {resource_enum}")
             
-            # Step 2: Get mappings
             resource_key = get_resource_key(resource_enum)
             collection_name = get_collection_name(resource_enum)
             
             logger.info(f"Mapped to resource_key: {resource_key}, collection: {collection_name}")
             
-            # Step 3: Generate MongoDB pipeline using TaskerAgent
             pipeline_text = tasker.run(user_input=user_message, resource=collection_name)
             logger.info(f"Generated pipeline: {pipeline_text}")
 
-            # 🔒 Read-only enforced
             action = Action.VIEW
             action_key = action.value
 
-            # Step 4: Execute query using ActionExecutor
             logger.info(f"Calling ActionExecutor with:")
             logger.info(f"  - collection_name: {collection_name}")
             logger.info(f"  - resource_key: {resource_key}")
@@ -169,20 +154,21 @@ def chat(request: ChatRequest):
             
             result = executor.execute_action(
                 db=db,
-                registry=registry.get("collections", {}),  # Pass collections, not resources
+                registry=registry.get("collections", {}),
                 collection_name=collection_name,
                 pipeline_text=pipeline_text,
-                resource_key=None,  # Don't pass resource_key since we don't have resources.yaml
-                action_key=None,  # Don't pass action_key
+                resource_key=None,
+                action_key=None,
                 limit=20
             )
 
-            # Get token metrics from tasker
+            # Calculate total time AFTER execution
+            total_time = round(time.perf_counter() - start_time, 3)
+            
             metrics = tasker.get_metrics()
 
             logger.info(
-                "Task execution completed | "
-                # f"time={total_time}s | "
+                f"Task execution completed | "
                 f"collection={collection_name} | "
                 f"resource={resource_key} | "
                 f"result_length={len(result)} chars | "
@@ -195,14 +181,14 @@ def chat(request: ChatRequest):
             if not result or result.startswith("❌"):
                 logger.warning(f"Execution returned error or empty: {result[:100]}")
             
-            # # Add metrics footer to response
-            # if metrics.get('cache_hit'):
-            #     result += f"\n\n⚡ Query retrieved from cache in {total_time}s"
-            # elif metrics.get('llm_used'):
-            #     examples_info = f" (guided by {metrics['examples_used']} past examples)" if metrics.get('examples_used', 0) > 0 else ""
-            #     result += f"\n\n💡 Query generated in {total_time}s using ~{metrics['total_tokens']} tokens{examples_info}"
-            # else:
-            #     result += f"\n\n💡 Query completed in {total_time}s (using fallback)"
+            # Add metrics footer to response
+            if metrics.get('cache_hit'):
+                result += f"\n\n⚡ Query retrieved from cache in {total_time}s"
+            elif metrics.get('llm_used'):
+                examples_info = f" (guided by {metrics['examples_used']} past examples)" if metrics.get('examples_used', 0) > 0 else ""
+                result += f"\n\n💡 Query generated in {total_time}s using ~{metrics['total_tokens']} tokens{examples_info}"
+            else:
+                result += f"\n\n💡 Query completed in {total_time}s (using fallback)"
             
             return {"response": result}
 
