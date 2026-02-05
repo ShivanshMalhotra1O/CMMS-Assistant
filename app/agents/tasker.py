@@ -151,6 +151,8 @@ IMPORTANT SCHEMA NOTE:
 - The `people` field is an array of user `_id` values.
 - For queries involving "assigned to", "technician", or "responsible",
   you MUST use the `people` field.
+- For input that contains work order id and if it contains id (like WO 22) then add - automatically after WO (it will become WO-22) and then pass this to db in query.
+- For queries where we are asking details about people or related to people database , then always mention people name, department and   userTitle.
 
 [{"$match": {"deleted": {"$ne": true}}}]
 ```

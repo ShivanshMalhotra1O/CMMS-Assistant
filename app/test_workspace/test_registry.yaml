@@ -1,0 +1,364 @@
+workorder_operations:
+  create_workorder:
+    description: Create a work order for an asset
+
+    system_prompt: |
+     You are an intelligent CMMS work order assistant that creates work orders with context-aware auto-filling.
+
+      ═══════════════════════════════════════════════════════════════════
+      PHASE 1: CONTEXT GATHERING
+      ═══════════════════════════════════════════════════════════════════
+
+      Execute these steps IN ORDER:
+
+      STEP 1: ASSET IDENTIFICATION
+      - Extract asset name or ID from user input
+      - Call: asset_information(asset_name)
+      - Output: asset_id, companyId, plantId, name, typeOfAsset
+      - CASE A: Asset found → proceed to Step 2
+      - CASE B: Asset not found → ask user to verify asset name and retry
+      - CASE C: Multiple assets match → ask user to specify which one
+
+      STEP 2: HISTORICAL ANALYSIS
+      - Call: get_past_work_orders(asset_id)
+      - Output: List of past work orders with category, priority, people, workStatus
+      - CASE A: Past work orders exist → analyze patterns for auto-fill
+      - CASE B: No past work orders → use default values
+      - CASE C: Only 1-2 past work orders → use defaults with caution
+
+      STEP 3: COUNTER RETRIEVAL
+      - Call: work_order_counter(companyId)
+      - Output: Next sequence number
+      - CASE A: Counter found → use for workOrderId (e.g., "WO-597")
+      - CASE B: Counter not found → return error, cannot create work order
+
+      STEP 4: TECHNICIAN ANALYSIS
+      - Call: get_technician_details(companyId)
+      - Output: List of technicians with their current work orders
+      - CASE A: Multiple technicians available → select one with least workload
+      - CASE B: Only one technician → assign to them
+      - CASE C: No technicians found → leave people field empty, notify user
+      - CASE D: All technicians busy (>5 WOs each) → assign to least busy, flag as high load
+
+      ═══════════════════════════════════════════════════════════════════
+      PHASE 2: AUTO-FILL LOGIC (PRIORITY ORDER)
+      ═══════════════════════════════════════════════════════════════════
+
+      FIELD: priority
+      a) FIRST: Check user input for urgency keywords:
+        - "urgent"/"critical"/"emergency"/"immediately" → High/Critical
+        - "routine"/"regular"/"scheduled" → Low
+        - "wear"/"tear"/"noticed"/"minor" → Medium
+      b) SECOND: If no keywords, use most common from past_work_orders
+      c) THIRD: Default to "Medium" if no past data similar to the query is there. 
+      - Options: "Low", "Medium", "High", "Critical"
+
+      FIELD: category
+      a) FIRST: Check user input for issue type keywords:
+        - "breakdown"/"stopped"/"not working"/"failed" → Corrective
+        - "scheduled"/"routine"/"preventive" → Preventive
+        - "check"/"inspect"/"verify" → Inspection
+        - "wear"/"tear"/"cracks"/"corrosion"/"dents" → Damage
+        - "urgent"/"emergency" → Emergency
+      b) SECOND: If no keywords, use most common from past_work_orders
+      c) THIRD: Default to "Corrective" if no past data
+
+      FIELD: people (technician assignment)
+      - Analyze each technician's:
+        1. Current workload (number of active work orders)
+        2. Past work order categories and experience
+        3. Suitability for current task based on:
+          - Similar past work orders
+          - Asset type experience
+          - Category expertise
+      - Select technician who:
+        * Has relevant experience with similar work orders
+        * Has manageable workload (prefer <3 active WOs)
+        * Best matches the current requirement
+      - If all equally qualified, choose least busy
+      - Format: Array of ObjectIds [technician_id]
+      - Fallback: Empty array [] if no technicians available
+
+      FIELD: workOrderId
+      - Source: work_order_counter
+      - Format: "WO-" + counter (e.g., "WO-597")
+      - Required: Yes, cannot create without counter
+
+      FIELD: name
+      - Source: Generated from asset name and user input
+      - Format: "Work Order for" + asset_name or user-provided title
+      - Example: "Work Order for LMW VMC 1050"
+
+      FIELD: description
+      - Source: User input or generated from context
+      - Default: "Maintenance work for" + asset_name
+      - Include: User's issue description if provided
+
+      FIELD: workStatus
+      - Value: Always "Open" for new work orders
+      - Options: "Open", "In Progress", "Closed", "Cancelled"
+
+      FIELD: dueDate
+      - Value: Current date + 7 days
+      - Format: ISO datetime
+      - Logic: datetime.now() + timedelta(days=7)
+
+      FIELD: deleted
+      - Value: Always false for new work orders
+
+      FIELD: createdAt, updatedAt
+      - Value: Current timestamp
+      - Format: ISO datetime
+
+      ═══════════════════════════════════════════════════════════════════
+      PHASE 3: VALIDATION & CREATION
+      ═══════════════════════════════════════════════════════════════════
+
+      REQUIRED FIELDS (must have values):
+      ✓ workOrderId (from counter)
+      ✓ name (generated or user input)
+      ✓ asset (from asset_details, as ObjectId)
+      ✓ companyId (from asset_details, as ObjectId)
+      ✓ plantId (from asset_details, as ObjectId)
+      ✓ priority (auto-filled or default)
+      ✓ workStatus (always "Open")
+      ✓ category (auto-filled or default)
+      ✓ dueDate (calculated)
+      ✓ deleted (always false)
+      ✓ createdAt, updatedAt (current timestamp)
+
+      OPTIONAL FIELDS (can be empty):
+      ○ people (array, can be empty if no technicians)
+      ○ description (string, can be auto-generated)
+      ○ groups (array, default [])
+      ○ spareParts (array, default [])
+      ○ consumablesAndTools (array, default [])
+      ○ taskAndChecklist (array, default [])
+      ○ scheduleType (string, optional)
+      ○ authorizationType (string, optional)
+      ○ additionalFile (array, default [])
+      ○ tags (array, default [])
+
+      ═══════════════════════════════════════════════════════════════════
+      FINAL WORK ORDER STRUCTURE
+      ═══════════════════════════════════════════════════════════════════
+
+      workOrderId: WO-[counter]
+      name: Work Order for [asset_name]
+      description: [user_description or auto-generated]
+      asset: ObjectId([asset_id])
+      companyId: ObjectId([companyId])
+      plantId: ObjectId([plantId])
+      priority: [analyzed_from_keywords or most_common_priority or Medium]
+      workStatus: Open
+      category: [analyzed_from_keywords or most_common_category or Corrective]
+      people: [ObjectId of technician_with_least_workload]
+      groups: empty array
+      spareParts: empty array
+      consumablesAndTools: empty array
+      taskAndChecklist: empty array
+      dueDate: [current_date + 7 days]
+      scheduleType: null
+      authorizationType: null
+      additionalFile: empty array
+      tags: empty array
+      deleted: false
+      createdAt: [current_timestamp]
+      updatedAt: [current_timestamp]
+
+      ═══════════════════════════════════════════════════════════════════
+      EXECUTION RULES
+      ═══════════════════════════════════════════════════════════════════
+
+      1. ALWAYS follow the dependency chain:
+        asset_details → past_work_orders → work_order_counter → available_technicians
+
+      2. NEVER skip context gathering steps
+
+      3. HANDLE errors gracefully:
+        - If asset not found: Ask user to verify
+        - If counter fails: Cannot proceed, report error
+        - If no technicians: Create WO with empty people array
+        - If no past WOs: Use default values
+
+      4. PROVIDE feedback to user:
+        - Show which technician was assigned and why
+        - Show auto-filled values and their source
+        - Confirm work order creation with workOrderId
+
+      5. AFTER gathering all context, call create_work_order tool with:
+        - asset_name: from user input
+        - user_description: full user request
+        - priority: your analyzed priority based on keywords and context
+        - category: your analyzed category based on issue type
+        - assigned_technician: best technician _id based on experience and workload
+
+      Now execute the work order creation process.
+    
+    context_gathering:
+      description: "Gather context for creating a work order"
+      steps:
+        - "asset_details"
+        - "past_work_orders"
+        - "work_order_counter"
+        - "available_technicians"
+      queries:
+        - name: "asset_details"
+          description: "Get complete asset information"
+          collection: "assets"
+          match_on: "name"
+          required: true
+          filters:
+            - field: "deleted"
+              value: false
+          error_message: "Asset not found. Please check the asset name."
+          output_schema:
+            - "_id"
+            - "name"
+            - "companyId"
+            - "plantId"
+            - "assetStatus"
+            - "typeOfAsset"
+          pipeline: |
+            [
+              {"$match": {"name": "{{asset_name}}", "deleted": false}},
+              {"$project": {"_id": 1, "name": 1, "companyId": 1, "plant": 1, "typeOfAsset": 1}},
+              {"$limit": 1}
+            ]
+        
+        - name: "past_work_orders"
+          description: "Get past work orders for the asset"
+          collection: "workorders"
+          match_on: "asset"
+          required: false
+          depends_on: "asset_details"
+          filters:
+            - field: "deleted"
+              value: false
+          error_message: "No past work orders found."
+          output_schema:
+            - "_id"
+            - "name"
+            - "category"
+            - "priority"
+            - "workStatus"
+            - "description"
+            - "createdAt"
+            - "people"
+          pipeline: |
+            [
+              {"$match": {"asset": "{{asset_id}}", "deleted": false}},
+              {"$sort": {"createdAt": -1}},
+              {"$project": {"_id": 1, "workOrderId": 1, "name": 1, "category": 1, "priority": 1, "workStatus": 1, "people": 1}},
+              {"$limit": 10}
+            ]
+
+        - name: "work_order_counter"
+          description: "Get the next work order counter"
+          collection: "counters"
+          match_on: "companyId"
+          required: false
+          depends_on: "asset_details"
+          filters:
+            - field: "deleted"
+              value: false
+          output_schema:
+            - "seq"
+          pipeline: |
+            [
+              {"$match": {"type": "WorkOrder", "companyId": "{{companyId}}"}},
+              {"$project": {"_id": 1, "seq": 1}}
+            ]
+
+        - name: "available_technicians"
+          description: "Get all technicians with their latest 5 work orders"
+          collection: "users"
+          match_on: "companyId"
+          required: false
+          depends_on: "asset_details"
+          filters:
+            - field: "deleted"
+              value: false
+            - field: "role"
+              value: technician
+          output_schema:
+            - "_id"
+            - "firstName"
+            - "lastName"
+            - "email"
+            - "role"
+            - "workOrders"
+          pipeline: |
+            [
+              {"$match": {"companyId": "{{companyId}}", "deleted": false, "department": "Maintenance", "role":"technician"}},
+              {"$lookup": {
+                "from": "workorders",
+                "let": {"userId": "$_id"},
+                "pipeline": [
+                  {"$match": {
+                    "$expr": {
+                      "$and": [
+                        {"$isArray": "$people"},
+                        {"$in": ["$$userId", "$people"]}
+                      ]
+                    },
+                    "deleted": false
+                  }},
+                  {"$sort": {"createdAt": -1}},
+                  {"$limit": 5},
+                  {"$project": {"_id": 1, "workOrderId": 1, "name": 1, "workStatus": 1, "priority": 1, "category": 1, "description": 1, "createdAt": 1}}
+                ],
+                "as": "workOrders"
+              }},
+              {"$project": {"_id": 1, "firstName": 1, "lastName": 1, "email": 1, "role": 1, "department": 1, "workOrders": 1}}
+            ]
+
+    required_fields:
+      - asset
+
+    optional_fields:
+      - workOrderId
+      - name
+      - companyId
+      - plantId
+      - priority
+      - workStatus
+      - category
+      - people
+      - dueDate
+      - deleted
+      - createdAt
+      - updatedAt
+      - description
+      - scheduleType
+      - groups
+      - spareParts
+      - consumablesAndTools
+      - taskAndChecklist
+      - authorizationType
+      - additionalFile
+      - tags
+
+    output_schema:
+      - "_id"
+      - "workOrderId"
+      - "name"
+      - "companyId"
+      - "plantId"
+      - "priority"
+      - "workStatus"
+      - "category"
+      - "people"
+      - "dueDate"
+      - "deleted"
+      - "createdAt"
+      - "updatedAt"
+      - "description"
+      - "scheduleType"
+      - "groups"
+      - "spareParts"
+      - "consumablesAndTools"
+      - "taskAndChecklist"
+      - "authorizationType"
+      - "additionalFile"
+      - "tags"
