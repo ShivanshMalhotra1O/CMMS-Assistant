@@ -15,3 +15,5 @@ def get_mongo_client():
 def get_db():
     client = get_mongo_client()
     return client[os.getenv("MONGO_DB_NAME")]
+
+

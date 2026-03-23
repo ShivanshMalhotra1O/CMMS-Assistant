@@ -1,0 +1,779 @@
+retrieval_operations:
+  system_prompt: |
+    You are a CMMS data retrieval assistant.
+
+    Your job is to understand what the user wants to find and use the available tools to fetch it.
+
+    GENERAL RULES:
+
+    1. UNDERSTAND the user query
+       - Identify what entity they want: work orders, assets, technicians, parts, etc.
+       - Identify any filters: status, priority, date, name, category, etc.
+       - Identify any limits: "last 5", "top 10", "recent", etc.
+       - Identify the user input and see if it requires two tools together, if it needs then use those tools.
+
+    2. SELECT the right tool
+       - Use the tool that matches the entity the user is asking about
+       - For work order queries: use get_work_orders
+       - For asset queries: use get_assets
+
+    3. EXTRACT filters from natural language
+       - Use the field definitions and synonyms below to map user words to correct values
+       - Date keywords: today, this week, last month -> convert to date range
+       - If a filter is not mentioned: do not pass it, let the tool return all
+
+    4. HANDLE results
+       - If results found: present clearly as a list or table with key fields
+       - Always mention the total count
+       - If no results: inform the user and suggest relaxing the filters
+       - If error: explain what went wrong and ask user to clarify
+
+    5. HANDLE ambiguity
+       - If the query is unclear: ask one clarifying question
+       - If multiple entities could match: ask user to confirm
+
+
+  workorder_retrieval:
+    description: Retrieve work orders from the workorders collection
+    collection: workorders
+
+    fields:
+      _id: { type: ObjectId }
+      workOrderId: { type: String }
+      name: { type: String }
+      description: { type: String }
+
+      asset:
+        type: ObjectId
+        references: assets._id
+        description: >
+          The asset this work order belongs to.
+          Resolve asset name to ObjectId before filtering.
+
+      priority:
+        type: enum
+        canonical_values:
+          - Low
+          - Medium
+          - High
+          - Critical
+        accepted_synonyms:
+          low: Low
+          routine: Low
+          normal: Medium
+          medium: Medium
+          high: High
+          urgent: High
+          critical: Critical
+          emergency: Critical
+
+      workStatus:
+        type: enum
+        canonical_values:
+          - Open
+          - In Progress
+          - Closed
+          - Cancelled
+        accepted_synonyms:
+          open: Open
+          pending: Open
+          new: Open
+          running: In Progress
+          in progress: In Progress
+          active: In Progress
+          ongoing: In Progress
+          closed: Closed
+          done: Closed
+          completed: Closed
+          resolved: Closed
+          cancelled: Cancelled
+          canceled: Cancelled
+
+      category:
+        type: enum
+        canonical_values:
+          - Corrective
+          - Preventive
+          - Inspection
+          - Damage
+          - Emergency
+        accepted_synonyms:
+          breakdown: Corrective
+          failed: Corrective
+          not working: Corrective
+          stopped: Corrective
+          scheduled: Preventive
+          preventive: Preventive
+          routine: Preventive
+          inspect: Inspection
+          check: Inspection
+          verify: Inspection
+          leaking: Damage
+          wear: Damage
+          cracks: Damage
+          corrosion: Damage
+          damage: Damage
+          emergency: Emergency
+
+      companyId: { type: ObjectId, references: companies._id }
+      plantId: { type: ObjectId, references: plants._id }
+      pmId: { type: ObjectId, references: preventiveMaintenance._id }
+      lastModifiedBy: { type: ObjectId, references: users._id }
+
+      people:
+        type: array
+        items: ObjectId
+        references: users._id
+        semantics: assignees
+        description: >
+          List of users assigned to the work order.
+          Used for queries like "assigned to", "technician",
+          "responsible person". Resolve name to ObjectId before filtering.
+
+      dueDate:
+        type: Date
+        description: >
+          Due date of the work order.
+          Used for queries like "overdue", "due this week",
+          "due before X". Compare against current date for overdue queries.
+
+      createdAt:
+        type: Date
+        description: >
+          When the work order was created.
+          Used for queries like "created last month", "recent", "this week".
+
+      updatedAt: { type: Date }
+
+      deleted:
+        type: Boolean
+        description: Always filter with deleted=false. Never return deleted records.
+
+    filter_examples:
+      - user_says: "show all open work orders"
+        filters: { workStatus: "Open", deleted: false }
+
+      - user_says: "work orders for BFW BMV 1600"
+        filters: { asset_name: "BFW BMV 1600", deleted: false }
+
+      - user_says: "high priority damage work orders"
+        filters: { priority: "High", category: "Damage", deleted: false }
+
+      - user_says: "overdue work orders"
+        filters: { dueDate: { lt: today }, workStatus: "Open", deleted: false }
+
+      - user_says: "last 5 closed work orders"
+        filters: { workStatus: "Closed", deleted: false }
+        limit: 5
+
+      - user_says: "work orders assigned to John"
+        filters: { people: "<resolve John's _id>", deleted: false }
+
+      - user_says: "work orders created this week"
+        filters: { createdAt: { gte: start_of_week }, deleted: false }
+
+    pipeline:
+      description: >
+        Base MongoDB aggregation pipeline for work order retrieval.
+        The tool dynamically injects $match filters based on user query
+        before executing. Template variables are replaced at runtime.
+      stages: |
+        [
+          {
+            "$match": {
+              "deleted": false
+            }
+          },
+          {
+            "$lookup": {
+              "from": "assets",
+              "localField": "asset",
+              "foreignField": "_id",
+              "as": "assetDetails"
+            }
+          },
+          {
+            "$lookup": {
+              "from": "users",
+              "localField": "people",
+              "foreignField": "_id",
+              "as": "technicianDetails"
+            }
+          },
+          {
+            "$lookup": {
+              "from": "users",
+              "localField": "lastModifiedBy",
+              "foreignField": "_id",
+              "as": "lastModifiedByDetails"
+            }
+          },
+          {
+            "$project": {
+              "_id": 1,
+              "workOrderId": 1,
+              "name": 1,
+              "description": 1,
+              "workStatus": 1,
+              "priority": 1,
+              "category": 1,
+              "dueDate": 1,
+              "createdAt": 1,
+              "updatedAt": 1,
+              "assetName": { "$arrayElemAt": ["$assetDetails.name", 0] },
+              "technicians": {
+                "$map": {
+                  "input": "$technicianDetails",
+                  "as": "t",
+                  "in": {
+                    "id": "$$t._id",
+                    "name": { "$concat": ["$$t.firstName", " ", "$$t.lastName"] }
+                  }
+                }
+              },
+              "lastModifiedBy": {
+                "$arrayElemAt": [
+                  {
+                    "$map": {
+                      "input": "$lastModifiedByDetails",
+                      "as": "u",
+                      "in": { "$concat": ["$$u.firstName", " ", "$$u.lastName"] }
+                    }
+                  },
+                  0
+                ]
+              }
+            }
+          },
+          {
+            "$sort": { "createdAt": -1 }
+          },
+          {
+            "$limit": "{{limit}}"
+          }
+        ]
+
+      dynamic_filters:
+        description: >
+          These filters are injected into the $match stage at runtime
+          based on user query. All are optional.
+        filters:
+          - field: asset
+            type: ObjectId
+            inject_when: asset_name is provided
+            note: Resolve asset name to ObjectId via assets collection first
+
+          - field: workStatus
+            type: String
+            inject_when: status keyword detected in user query
+
+          - field: priority
+            type: String
+            inject_when: priority keyword detected in user query
+
+          - field: category
+            type: String
+            inject_when: category keyword detected in user query
+
+          - field: people
+            type: ObjectId
+            inject_when: technician name or id mentioned
+            note: Resolve technician name to ObjectId via users collection first
+
+          - field: dueDate
+            type: Date
+            inject_when: date/overdue keyword detected
+            operators: [$lt, $gt, $gte, $lte]
+
+          - field: createdAt
+            type: Date
+            inject_when: creation date keyword detected
+            operators: [$gte, $lte]
+
+  asset_retrieval:
+
+    description: Retrieve assets from the assets collection
+    collection: assets
+
+    fields:
+      _id: { type: ObjectId }
+
+      name:
+        type: String
+        description: Asset name. Used for queries like "show me Hydraulic Pump".
+
+      description: { type: String }
+
+      typeOfAsset:
+        type: String
+        description: >
+          Type or category of the asset (e.g. cnc, pump, motor, conveyor).
+          Used for queries like "show all CNC machines", "list all pumps".
+
+      assetStatus:
+        type: enum
+        canonical_values:
+          - Running
+          - Idle
+          - Maintenance
+          - Stopped
+        accepted_synonyms:
+          running: Running
+          active: Running
+          working: Running
+          operational: Running
+          idle: Idle
+          standby: Idle
+          under maintenance: Maintenance
+          in maintenance: Maintenance
+          maintenance: Maintenance
+          breakdown: Maintenance
+          broken: Maintenance
+          failed: Stopped
+          not working: Stopped
+          stopped: Stopped
+          decommissioned: Stopped
+          retired: Stopped
+          scrapped: Stopped
+
+      modelOfAsset:
+        type: String
+        description: Model number of the asset (e.g. HP-500).
+
+      manufacturer:
+        type: String
+        description: Manufacturer name (e.g. Industrial Equip Co.).
+
+      serialNumber:
+        type: String
+        description: Serial number of the asset (e.g. SN-123456).
+
+      location:
+        type: String
+        description: >
+          Physical location of the asset (e.g. Building A, Floor 2).
+          Used for queries like "assets in Building A".
+
+      qrcode: { type: String }
+
+      companyId: { type: ObjectId, references: companies._id }
+
+      plant:
+        type: ObjectId
+        references: plants._id
+        description: Plant where the asset is located.
+
+      installationDate:
+        type: Date
+        description: >
+          When the asset was installed.
+          Used for queries like "installed last year", "installed before 2024".
+
+      warrantyExpiryDate:
+        type: Date
+        description: >
+          When the warranty expires.
+          Used for queries like "warranty expiring soon", "warranty expired".
+
+      createdBy: { type: ObjectId, references: users._id }
+      createdAt: { type: Date }
+      updatedAt: { type: Date }
+
+      deleted:
+        type: Boolean
+        description: Always filter with deleted=false. Never return deleted records.
+
+      isDummyData:
+        type: Boolean
+        description: Filter with isDummyData=false to exclude test/dummy records.
+
+    filter_examples:
+      - user_says: "show all assets"
+        filters: { deleted: false, isDummyData: false }
+
+      - user_says: "show running assets"
+        filters: { assetStatus: "Running", deleted: false, isDummyData: false }
+
+      - user_says: "show all CNC machines"
+        filters: { typeOfAsset: "cnc", deleted: false, isDummyData: false }
+
+      - user_says: "assets in Building A"
+        filters: { location: { regex: "Building A" }, deleted: false, isDummyData: false }
+
+      - user_says: "assets under maintenance"
+        filters: { assetStatus: "Under Maintenance", deleted: false, isDummyData: false }
+
+      - user_says: "show Hydraulic Pump"
+        filters: { name: "Hydraulic Pump", deleted: false, isDummyData: false }
+
+      - user_says: "assets with warranty expiring this month"
+        filters: { warrantyExpiryDate: { gte: start_of_month, lte: end_of_month }, deleted: false }
+
+      - user_says: "broken assets"
+        filters: { assetStatus: "Breakdown", deleted: false, isDummyData: false }
+
+    pipeline:
+
+      description: >
+        Base MongoDB aggregation pipeline for asset retrieval.
+        The tool dynamically injects $match filters before executing.
+      stages: |
+        [
+          {
+            "$match": {
+              "deleted": false,
+              "isDummyData": false
+            }
+          },
+          {
+            "$lookup": {
+              "from": "plants",
+              "localField": "plant",
+              "foreignField": "_id",
+              "as": "plantDetails"
+            }
+          },
+          {
+            "$lookup": {
+              "from": "users",
+              "localField": "createdBy",
+              "foreignField": "_id",
+              "as": "createdByDetails"
+            }
+          },
+          {
+            "$project": {
+              "_id": 1,
+              "name": 1,
+              "description": 1,
+              "typeOfAsset": 1,
+              "assetStatus": 1,
+              "modelOfAsset": 1,
+              "manufacturer": 1,
+              "serialNumber": 1,
+              "location": 1,
+              "qrcode": 1,
+              "installationDate": 1,
+              "warrantyExpiryDate": 1,
+              "createdAt": 1,
+              "updatedAt": 1,
+              "plantName": { "$arrayElemAt": ["$plantDetails.name", 0] },
+              "createdBy": {
+                "$arrayElemAt": [
+                  {
+                    "$map": {
+                      "input": "$createdByDetails",
+                      "as": "u",
+                      "in": { "$concat": ["$$u.firstName", " ", "$$u.lastName"] }
+                    }
+                  },
+                  0
+                ]
+              }
+            }
+          },
+          {
+            "$sort": { "createdAt": -1 }
+          },
+          {
+            "$limit": "{{limit}}"
+          }
+        ]
+
+      dynamic_filters:
+        description: >
+          These filters are injected into the $match stage at runtime.
+          All are optional.
+        filters:
+          - field: name
+            type: String
+            inject_when: asset name mentioned in query
+
+          - field: assetStatus
+            type: String
+            inject_when: status keyword detected in query
+
+          - field: typeOfAsset
+            type: String
+            inject_when: asset type mentioned in query
+
+          - field: location
+            type: String
+            inject_when: location mentioned in query
+            note: Use regex for partial match
+
+          - field: manufacturer
+            type: String
+            inject_when: manufacturer name mentioned in query
+
+          - field: installationDate
+            type: Date
+            inject_when: installation date keyword detected
+            operators: [$gte, $lte]
+
+          - field: warrantyExpiryDate
+            type: Date
+            inject_when: warranty keyword detected
+            operators: [$gte, $lte]
+
+   users_retrieval:
+    description: Retrieve users (technicians, admins, managers) from the users collection
+    collection: users
+ 
+    fields:
+      _id: { type: ObjectId }
+ 
+      firstName:
+        type: String
+        description: First name of the user (e.g. "John").
+ 
+      lastName:
+        type: String
+        description: Last name of the user (e.g. "Singh").
+ 
+      email: { type: String }
+ 
+      department:
+        type: String
+        description: >
+          Department the user belongs to (e.g. "Maintenance", "Production").
+          Used for queries like "technicians in Maintenance".
+ 
+      phoneNumber: { type: String }
+ 
+      companyId: { type: ObjectId, references: companies._id }
+ 
+      plantId:
+        type: ObjectId
+        references: plants._id
+        description: Plant where the user is assigned.
+ 
+      role:
+        type: enum
+        canonical_values:
+          - technician
+          - admin
+          - manager
+          - viewer
+        accepted_synonyms:
+          tech: technician
+          engineer: technician
+          operator: technician
+          administrator: admin
+          superuser: admin
+          supervisor: manager
+          lead: manager
+          read only: viewer
+        description: >
+          Role of the user in the system.
+          Used for queries like "show all admins", "list technicians".
+ 
+      userTitle:
+        type: String
+        description: Job title of the user (e.g. "Technician", "Shift Supervisor").
+ 
+      isVerified:
+        type: Boolean
+        description: >
+          Whether the user's account has been verified.
+          Used for queries like "show unverified users".
+ 
+      shiftId:
+        type: ObjectId
+        references: shifts._id
+        description: Shift assigned to the user.
+ 
+      notificationPreference:
+        type: String
+        description: >
+          User's preferred notification channel (e.g. "Browser", "Email", "SMS").
+          Can also be an object with per-channel settings.
+ 
+      status:
+        type: enum
+        canonical_values:
+          - available
+          - busy
+        accepted_synonyms:
+          present: available
+          active: available
+          free: available
+          idle: available
+          standby: available
+          working: busy
+          on leave: busy
+          away: busy
+          occupied: busy
+        description: >
+          Current availability status of the user.
+          Used for queries like "show available technicians".
+ 
+      maxSessions:
+        type: Number
+        description: Maximum number of concurrent sessions allowed for the user.
+ 
+      deleted:
+        type: Boolean
+        description: Always filter with deleted=false. Never return deleted records.
+ 
+      createdBy: { type: ObjectId, references: users._id }
+ 
+      createdAt: { type: Date }
+ 
+      updatedAt: { type: Date }
+ 
+      createdDate: { type: Date }
+ 
+      lastLogin:
+        type: Date
+        description: >
+          Timestamp of the user's most recent login.
+          Used for queries like "users who logged in this week", "inactive users".
+ 
+      lastUpdated:
+        type: Date
+        description: Timestamp of the last profile update (alias of updatedAt in some records).
+ 
+      kpiLastUpdated:
+        type: Date
+        description: Timestamp of the last KPI recalculation for this user.
+ 
+    filter_examples:
+      - user_says: "show all technicians"
+        filters: { role: "technician", deleted: false }
+ 
+      - user_says: "list all admins"
+        filters: { role: "admin", deleted: false }
+ 
+      - user_says: "show available technicians"
+        filters: { role: "technician", status: "available", deleted: false }
+ 
+      - user_says: "users in Maintenance department"
+        filters: { department: "Maintenance", deleted: false }
+ 
+      - user_says: "show unverified users"
+        filters: { isVerified: false, deleted: false }
+ 
+      - user_says: "find John Singh"
+        filters: { firstName: "John", lastName: "Singh", deleted: false }
+ 
+      - user_says: "users who logged in this week"
+        filters: { lastLogin: { gte: start_of_week }, deleted: false }
+ 
+      - user_says: "technicians in Production"
+        filters: { role: "technician", department: "Production", deleted: false }
+ 
+    pipeline:
+      description: >
+        Base MongoDB aggregation pipeline for user retrieval.
+        The tool dynamically injects $match filters based on user query
+        before executing. Template variables are replaced at runtime.
+      stages: |
+        [
+          {
+            "$match": {
+              "deleted": false
+            }
+          },
+          {
+            "$lookup": {
+              "from": "plants",
+              "localField": "plantId",
+              "foreignField": "_id",
+              "as": "plantDetails"
+            }
+          },
+          {
+            "$lookup": {
+              "from": "users",
+              "localField": "createdBy",
+              "foreignField": "_id",
+              "as": "createdByDetails"
+            }
+          },
+          {
+            "$project": {
+              "_id": 1,
+              "firstName": 1,
+              "lastName": 1,
+              "email": 1,
+              "department": 1,
+              "phoneNumber": 1,
+              "role": 1,
+              "userTitle": 1,
+              "isVerified": 1,
+              "status": 1,
+              "notificationPreference": 1,
+              "lastLogin": 1,
+              "createdAt": 1,
+              "updatedAt": 1,
+              "plantName": { "$arrayElemAt": ["$plantDetails.name", 0] },
+              "createdBy": {
+                "$arrayElemAt": [
+                  {
+                    "$map": {
+                      "input": "$createdByDetails",
+                      "as": "u",
+                      "in": { "$concat": ["$$u.firstName", " ", "$$u.lastName"] }
+                    }
+                  },
+                  0
+                ]
+              }
+            }
+          },
+          {
+            "$sort": { "createdAt": -1 }
+          },
+          {
+            "$limit": "{{limit}}"
+          }
+        ]
+ 
+      dynamic_filters:
+        description: >
+          These filters are injected into the $match stage at runtime
+          based on user query. All are optional.
+        filters:
+          - field: firstName
+            type: String
+            inject_when: first name mentioned in query
+            note: Use regex for partial/case-insensitive match
+ 
+          - field: lastName
+            type: String
+            inject_when: last name mentioned in query
+            note: Use regex for partial/case-insensitive match
+
+          - field: email
+            type: String
+            inject_when: email address mentioned in query
+            note: Use exact match or regex for partial/case-insensitive match
+ 
+          - field: role
+            type: String
+            inject_when: role keyword detected in query
+ 
+          - field: department
+            type: String
+            inject_when: department name mentioned in query
+            note: Use regex for partial match
+ 
+          - field: status
+            type: String
+            inject_when: availability/status keyword detected in query
+ 
+          - field: isVerified
+            type: Boolean
+            inject_when: verified/unverified keyword detected
+ 
+          - field: lastLogin
+            type: Date
+            inject_when: login date or activity keyword detected
+            operators: [$gte, $lte]
+ 
+          - field: createdAt
+            type: Date
+            inject_when: creation date keyword detected
+            operators: [$gte, $lte]
+ 

@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>CMMS Assistant</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet"/>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0d0f12;
+    --surface: #13161b;
+    --surface2: #1a1e26;
+    --border: #262c38;
+    --accent: #4f8ef7;
+    --accent2: #7c3aed;
+    --green: #22c55e;
+    --amber: #f59e0b;
+    --red: #ef4444;
+    --text: #e8eaf0;
+    --muted: #6b7280;
+    --font-head: 'Syne', sans-serif;
+    --font-mono: 'DM Mono', monospace;
+  }
+
+  body { background: var(--bg); color: var(--text); font-family: var(--font-mono); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+  header { padding: 14px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; background: var(--surface); flex-shrink: 0; }
+  .logo { width: 30px; height: 30px; background: linear-gradient(135deg, var(--accent), var(--accent2)); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-family: var(--font-head); font-weight: 800; font-size: 13px; color: white; }
+  .header-title { font-family: var(--font-head); font-size: 15px; font-weight: 700; }
+  .header-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2s infinite; }
+  .model-tag { font-size: 10px; color: var(--muted); background: var(--surface2); border: 1px solid var(--border); padding: 3px 8px; border-radius: 20px; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  .main { display: flex; flex: 1; overflow: hidden; }
+
+  .sidebar { width: 210px; border-right: 1px solid var(--border); background: var(--surface); padding: 18px 14px; display: flex; flex-direction: column; gap: 5px; flex-shrink: 0; overflow-y: auto; }
+  .sidebar-label { font-size: 10px; letter-spacing: 0.1em; color: var(--muted); text-transform: uppercase; margin-bottom: 6px; padding-left: 8px; }
+  .suggestion { padding: 8px 10px; border-radius: 8px; font-size: 11.5px; color: var(--muted); cursor: pointer; transition: all 0.15s; border: 1px solid transparent; line-height: 1.4; }
+  .suggestion:hover { background: var(--surface2); border-color: var(--border); color: var(--text); }
+  .tag { display: inline-block; font-size: 9px; padding: 2px 6px; border-radius: 4px; margin-bottom: 3px; font-weight: 500; letter-spacing: 0.05em; text-transform: uppercase; }
+  .tag.create { background: rgba(124,58,237,0.2); color: #a78bfa; }
+  .tag.retrieve { background: rgba(79,142,247,0.2); color: #93bbfd; }
+
+  .chat-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+  .messages { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 18px; scroll-behavior: smooth; }
+  .messages::-webkit-scrollbar { width: 4px; }
+  .messages::-webkit-scrollbar-track { background: transparent; }
+  .messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .msg { display: flex; gap: 10px; animation: fadeIn 0.2s ease; }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(5px)} to{opacity:1;transform:none} }
+  .msg.user { flex-direction: row-reverse; }
+
+  .avatar { width: 28px; height: 28px; border-radius: 7px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; font-family: var(--font-head); }
+  .avatar.ai { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: white; }
+  .avatar.user-av { background: var(--surface2); border: 1px solid var(--border); color: var(--muted); }
+
+  .bubble { max-width: 70%; padding: 11px 15px; border-radius: 12px; font-size: 13px; line-height: 1.65; }
+  .msg.user .bubble { background: var(--surface2); border: 1px solid var(--border); border-top-right-radius: 4px; }
+  .msg.ai .bubble { background: var(--surface); border: 1px solid var(--border); border-top-left-radius: 4px; }
+
+  .intent-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; padding: 3px 9px; border-radius: 20px; margin-bottom: 8px; font-weight: 500; letter-spacing: 0.05em; text-transform: uppercase; }
+  .intent-badge.create_workorder { background: rgba(124,58,237,0.15); color: #a78bfa; border: 1px solid rgba(124,58,237,0.3); }
+  .intent-badge.retrieve { background: rgba(79,142,247,0.15); color: #93bbfd; border: 1px solid rgba(79,142,247,0.3); }
+  .intent-badge.unknown { background: rgba(107,114,128,0.15); color: var(--muted); border: 1px solid rgba(107,114,128,0.3); }
+
+  .tool-card { background: var(--bg); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; padding: 9px 13px; margin-top: 7px; font-size: 12px; }
+  .tool-card .tool-name { color: var(--accent); font-weight: 500; margin-bottom: 4px; display: flex; align-items: center; gap: 5px; }
+  .tool-card .tool-name::before { content:''; width:5px; height:5px; background:var(--accent); border-radius:50%; display:inline-block; }
+  .tool-args { color: var(--muted); font-size: 11px; white-space: pre-wrap; word-break: break-all; overflow-y: auto; }
+  .tool-result-card { border-left-color: var(--green); }
+  .tool-result-card .tool-name { color: var(--green); }
+  .tool-result-card .tool-name::before { background: var(--green); }
+
+  /* Stats row shown after final */
+  .stats-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .stat-pill { font-size: 10px; padding: 3px 9px; border-radius: 20px; background: var(--surface2); border: 1px solid var(--border); color: var(--muted); display: flex; align-items: center; gap: 4px; }
+  .stat-pill span { color: var(--text); }
+  .stat-pill.time-pill { border-color: rgba(245,158,11,0.4); color: var(--amber); }
+  .stat-pill.time-pill span { color: var(--amber); }
+
+  .thinking { display: flex; gap: 4px; align-items: center; padding: 12px 15px; }
+  .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); animation: bounce 1.2s infinite; }
+  .dot:nth-child(2){animation-delay:.2s} .dot:nth-child(3){animation-delay:.4s}
+  @keyframes bounce { 0%,80%,100%{transform:scale(0.6);opacity:0.4} 40%{transform:scale(1);opacity:1} }
+
+  .input-area { padding: 14px 24px 18px; border-top: 1px solid var(--border); background: var(--surface); flex-shrink: 0; }
+  .input-wrap { display: flex; gap: 10px; align-items: flex-end; background: var(--bg); border: 1px solid var(--border); border-radius: 12px; padding: 9px 13px; transition: border-color 0.2s; }
+  .input-wrap:focus-within { border-color: var(--accent); }
+  #input { flex:1; background:transparent; border:none; outline:none; color:var(--text); font-family:var(--font-mono); font-size:13px; resize:none; line-height:1.5; max-height:100px; overflow-y:auto; }
+  #input::placeholder { color: var(--muted); }
+  #send-btn { background:var(--accent); border:none; border-radius:7px; width:32px; height:32px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.15s; flex-shrink:0; }
+  #send-btn:hover { background:#3b7de8; transform:scale(1.05); }
+  #send-btn:disabled { background:var(--border); cursor:not-allowed; transform:none; }
+  #send-btn svg { width:15px; height:15px; fill:white; }
+  .input-hint { font-size: 10px; color: var(--muted); margin-top: 7px; text-align: center; }
+
+  .empty-state { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; color:var(--muted); text-align:center; }
+  .empty-icon { width:46px; height:46px; background:var(--surface2); border:1px solid var(--border); border-radius:13px; display:flex; align-items:center; justify-content:center; font-size:20px; margin-bottom:4px; }
+  .empty-title { font-family:var(--font-head); font-size:15px; color:var(--text); font-weight:600; }
+  .empty-sub { font-size:11.5px; line-height:1.6; max-width:260px; }
+
+  @media(max-width:640px){ .sidebar{display:none} }
+
+  /* Markdown table styles */
+  .bubble table { width:100%; border-collapse:collapse; font-size:12px; margin:6px 0; }
+  .bubble th { background:var(--surface2); color:var(--text); padding:6px 10px; text-align:left; border:1px solid var(--border); font-weight:500; }
+  .bubble td { padding:5px 10px; border:1px solid var(--border); color:var(--muted); }
+  .bubble tr:nth-child(even) td { background:var(--bg); }
+  .bubble strong { color:var(--text); font-weight:500; }
+  .bubble code { font-family:var(--font-mono); font-size:11px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">C</div>
+  <div class="header-title">CMMS Assistant</div>
+  <div class="header-right">
+    <div class="status-dot"></div>
+    <div class="model-tag">gpt-oss:latest</div>
+    <button onclick="newSession()" style="background:var(--surface2);border:1px solid var(--border);color:var(--muted);font-family:var(--font-mono);font-size:10px;padding:4px 10px;border-radius:6px;cursor:pointer;transition:all 0.15s;" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--muted)'">+ new session</button>
+  </div>
+</header>
+
+<div class="main">
+  <div class="sidebar">
+    <div class="sidebar-label">Suggestions</div>
+    <div class="suggestion" onclick="fillInput('Create a damage work order for BFW BMV 1600 - it is leaking')">
+      <div class="tag create">Create</div><br>Damage WO for BFW BMV 1600
+    </div>
+    <div class="suggestion" onclick="fillInput('Raise an emergency work order for the hydraulic pump')">
+      <div class="tag create">Create</div><br>Emergency WO for pump
+    </div>
+    <div class="suggestion" onclick="fillInput('Create a corrective work order for LMW VMC 1050')">
+      <div class="tag create">Create</div><br>Corrective WO for VMC
+    </div>
+    <div class="suggestion" onclick="fillInput('Show all open work orders')">
+      <div class="tag retrieve">Retrieve</div><br>All open work orders
+    </div>
+    <div class="suggestion" onclick="fillInput('Get high priority work orders')">
+      <div class="tag retrieve">Retrieve</div><br>High priority WOs
+    </div>
+    <div class="suggestion" onclick="fillInput('List all stopped assets')">
+      <div class="tag retrieve">Retrieve</div><br>Stopped assets
+    </div>
+    <div class="suggestion" onclick="fillInput('Show overdue work orders')">
+      <div class="tag retrieve">Retrieve</div><br>Overdue work orders
+    </div>
+    <div class="suggestion" onclick="fillInput('Give me top 5 running assets')">
+      <div class="tag retrieve">Retrieve</div><br>Top 5 running assets
+    </div>
+  </div>
+
+  <div class="chat-area">
+    <div class="messages" id="messages">
+      <div class="empty-state" id="empty">
+        <div class="empty-icon">⚙</div>
+        <div class="empty-title">CMMS Assistant</div>
+        <div class="empty-sub">Create work orders, retrieve assets, or query your maintenance data.</div>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <div class="input-wrap">
+        <textarea id="input" rows="1" placeholder="Ask anything about your CMMS..." onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+        <button id="send-btn" onclick="sendMessage()">
+          <svg viewBox="0 0 24 24"><path d="M2 21L23 12 2 3v7l15 2-15 2v7z"/></svg>
+        </button>
+      </div>
+      <div class="input-hint">Enter to send &nbsp;·&nbsp; Shift+Enter for new line</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const API = 'http://localhost:5000';
+  let currentSessionId = localStorage.getItem('cmms_session_id') || null;
+
+  function renderMarkdown(text) {
+    const lines = text.split('\n');
+    let html = '';
+    let inTable = false;
+    let firstRow = true;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const isTableRow = /^\|.*\|$/.test(line.trim());
+      const isSeparator = /^\|[-| :]+\|$/.test(line.trim());
+
+      if (isSeparator) continue;
+
+      if (isTableRow) {
+        const cells = line.trim().split('|').filter((c,idx,arr) => idx>0 && idx<arr.length-1);
+        if (!inTable) {
+          html += '<table>';
+          inTable = true;
+          firstRow = true;
+        }
+        if (firstRow) {
+          html += '<thead><tr>' + cells.map(c => `<th>${c.trim()}</th>`).join('') + '</tr></thead><tbody>';
+          firstRow = false;
+        } else {
+          html += '<tr>' + cells.map(c => `<td>${c.trim()}</td>`).join('') + '</tr>';
+        }
+      } else {
+        if (inTable) { html += '</tbody></table>'; inTable = false; }
+        let l = line
+          .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+          .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+          .replace(/`(.+?)`/g, '<code style="background:var(--surface2);padding:1px 5px;border-radius:4px">$1</code>');
+        html += l + '<br>';
+      }
+    }
+    if (inTable) html += '</tbody></table>';
+    return html;
+  }
+
+  function autoResize(el) {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 100) + 'px';
+  }
+
+  function handleKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  }
+
+  function fillInput(text) {
+    const inp = document.getElementById('input');
+    inp.value = text;
+    autoResize(inp);
+    inp.focus();
+  }
+
+  function scrollBottom() {
+    const m = document.getElementById('messages');
+    m.scrollTop = m.scrollHeight;
+  }
+
+  function removeEmpty() {
+    const e = document.getElementById('empty');
+    if (e) e.remove();
+  }
+
+  function esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function addUserMsg(text) {
+    removeEmpty();
+    const div = document.createElement('div');
+    div.className = 'msg user';
+    div.innerHTML = `<div class="avatar user-av">U</div><div class="bubble">${esc(text)}</div>`;
+    document.getElementById('messages').appendChild(div);
+    scrollBottom();
+  }
+
+  function addThinking() {
+    const div = document.createElement('div');
+    div.className = 'msg ai';
+    div.id = 'thinking';
+    div.innerHTML = `<div class="avatar ai">A</div><div class="bubble thinking"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>`;
+    document.getElementById('messages').appendChild(div);
+    scrollBottom();
+  }
+
+  function removeThinking() {
+    const t = document.getElementById('thinking');
+    if (t) t.remove();
+  }
+
+  function addAiBubble() {
+    removeThinking();
+    const div = document.createElement('div');
+    div.className = 'msg ai';
+    div.innerHTML = `<div class="avatar ai">A</div><div class="bubble" id="ai-bubble"></div>`;
+    document.getElementById('messages').appendChild(div);
+    scrollBottom();
+    return document.getElementById('ai-bubble');
+  }
+
+  function intentLabel(intent) {
+    const labels = { create_workorder: 'Create Work Order', retrieve: 'Retrieve', unknown: 'General', cached: 'Cached' };
+    const cls = intent === 'cached' ? 'unknown' : intent;
+    return `<div class="intent-badge ${cls}">${labels[intent] || intent}</div>`;
+  }
+
+  async function sendMessage() {
+    const inp = document.getElementById('input');
+    const btn = document.getElementById('send-btn');
+    const text = inp.value.trim();
+    if (!text || btn.disabled) return;
+
+    inp.value = '';
+    inp.style.height = 'auto';
+    btn.disabled = true;
+
+    // Clear previous messages when new input is sent
+    document.getElementById('messages').innerHTML = '';
+    addUserMsg(text);
+    addThinking();
+
+    let bubble = null;
+    let currentIntent = 'unknown';
+    let toolsHtml = '';
+
+    try {
+      const res = await fetch(`${API}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, session_id: currentSessionId })
+      });
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if (raw === '[DONE]') break;
+
+          let ev;
+          try { ev = JSON.parse(raw); } catch { continue; }
+
+          if (ev.type === 'session_id') {
+            currentSessionId = ev.session_id;
+            localStorage.setItem('cmms_session_id', ev.session_id);
+          }
+
+          if (ev.type === 'intent') {
+            currentIntent = ev.intent;
+            bubble = addAiBubble();
+            bubble.innerHTML = intentLabel(ev.intent);
+          }
+
+          if (ev.type === 'tool_call') {
+            if (!bubble) bubble = addAiBubble();
+            const args = JSON.stringify(ev.args, null, 2);
+            toolsHtml += `<div class="tool-card"><div class="tool-name">${esc(ev.name)}</div><div class="tool-args">${esc(args)}</div></div>`;
+            bubble.innerHTML = intentLabel(currentIntent) + toolsHtml;
+            scrollBottom();
+          }
+
+          if (ev.type === 'tool_result') {
+            const r = typeof ev.result === 'object' ? JSON.stringify(ev.result, null, 2) : String(ev.result);
+            toolsHtml += `<div class="tool-card tool-result-card"><div class="tool-name">${esc(ev.name)} result</div><div class="tool-args">${esc(r)}</div></div>`;
+            bubble.innerHTML = intentLabel(currentIntent) + toolsHtml;
+            scrollBottom();
+          }
+
+          if (ev.type === 'final') {
+            if (!bubble) bubble = addAiBubble();
+            const statsHtml = `
+              <div class="stats-row">
+                <div class="stat-pill time-pill">time <span>${ev.time}s</span></div>
+                <div class="stat-pill">in <span>${ev.total_input}</span></div>
+                <div class="stat-pill">out <span>${ev.total_output}</span></div>
+                <div class="stat-pill">total <span>${ev.total_input + ev.total_output}</span></div>
+              </div>`;
+            bubble.innerHTML = intentLabel(currentIntent) + toolsHtml +
+              `<div style="margin-top:${toolsHtml?'10px':'0'}">${renderMarkdown(ev.content)}</div>` +
+              statsHtml;
+            scrollBottom();
+          }
+        }
+      }
+    } catch (err) {
+      removeThinking();
+      if (!bubble) bubble = addAiBubble();
+      bubble.innerHTML += `<div style="color:var(--red);font-size:12px;margin-top:8px">Error: ${esc(err.message)}</div>`;
+    }
+
+    btn.disabled = false;
+    inp.focus();
+  }
+</script>
+
+</body>
+</html>

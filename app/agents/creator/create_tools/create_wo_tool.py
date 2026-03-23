@@ -1,21 +1,15 @@
 from langchain.tools import tool
 from pymongo import MongoClient
-import os
-import yaml
 import json
 from dotenv import load_dotenv
 from bson import ObjectId as BSONObjectId
 from datetime import datetime, timedelta
-from app.db import get_db
+from app.db.db_connector import get_db
+from app.registry.registry_loader import load_registry
 
 load_dotenv()
 
-# Load registry
-def load_registry(path: str) -> dict:
-    with open(path, 'r', encoding='utf-8') as file:
-        return yaml.safe_load(file)
-
-registry = load_registry('./app/test_workspace/test_registry.yaml')
+registry = load_registry('./app/registry/creator_registry.yaml')
 
 db = get_db()
 
@@ -126,7 +120,6 @@ def get_technician_details(companyId: str) -> dict:
             doc["_id"] = str(doc["_id"])
 
     return result
-
 
 @tool
 def create_work_order(asset_name: str, user_description: str = "", priority: str = "Medium", category: str = "Corrective", assigned_technician: str = None) -> dict:
