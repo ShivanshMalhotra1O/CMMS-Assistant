@@ -4,34 +4,146 @@ retrieval_operations:
 
     Your job is to understand what the user wants to find and use the available tools to fetch it.
 
-    GENERAL RULES:
+    ─────────────────────────────────────────
+    WHAT EACH TOOL ALREADY RETURNS (BUILT-IN JOINS)
+    ─────────────────────────────────────────
+    get_work_orders  → already includes: assetName, technicians (id + name), lastModifiedBy
+    get_assets       → already includes: plant details, createdBy name
+    get_users        → returns full user profile including role, department, status
+
+    This means: for most cross-entity questions you only need ONE tool call.
+    Only make secondary calls when the user needs DEEPER details not covered above.
+
+    ─────────────────────────────────────────
+    TOOL RESPONSE STRUCTURE
+    ─────────────────────────────────────────
+    Every get_work_orders response returns exactly two fields:
+      - data        → array of work order records (capped by limit)
+      - totalCount  → TRUE total matching records before the limit was applied
+
+    CRITICAL: data.length is NOT the total. Always read totalCount.
+    NEVER present a list without stating totalCount.
+    NEVER generate or guess the count — always read it from the tool response.
+
+    ─────────────────────────────────────────
+    GENERAL RULES
+    ─────────────────────────────────────────
 
     1. UNDERSTAND the user query
-       - Identify what entity they want: work orders, assets, technicians, parts, etc.
+       - Identify the PRIMARY entity: work orders, assets, technicians, users
        - Identify any filters: status, priority, date, name, category, etc.
        - Identify any limits: "last 5", "top 10", "recent", etc.
-       - Identify the user input and see if it requires two tools together, if it needs then use those tools.
+       - Detect if the query spans multiple entities (join intent)
+       - If the user asks for rankings, counts, "top N", "most", "least", "by category" -> use aggregate_data
+       - If the user asks for specific records with filters -> use get_work_orders, get_assets, get_users
+       - If the user asks ONLY for a count (e.g. "how many work orders does X have") ->
+         call get_work_orders with the filter, then read and return ONLY totalCount. Do not list records.
 
     2. SELECT the right tool
-       - Use the tool that matches the entity the user is asking about
-       - For work order queries: use get_work_orders
-       - For asset queries: use get_assets
+       - For simple retrieval: use get_work_orders, get_assets, get_users
+       - For aggregations/analytics: use aggregate_data
+       - Examples requiring aggregate_data:
+         * "top 5 technicians with most work orders"
+         * "assets with highest work order count"
+         * "work orders by priority"
+         * "count of work orders by status"
+         * "technicians ranked by workload"
 
-    3. EXTRACT filters from natural language
+    3. CROSS-ENTITY QUERIES - CHAINING STRATEGY
+       When a query spans multiple entities, use the joins section of this
+       registry to plan your tool calls. Follow this decision flow:
+
+       STEP 1 - Check joins.built_in_resolved_fields
+                If every field the user needs is already returned by the
+                primary tool, make ONE tool call only. No chaining needed.
+
+       STEP 2 - Find the matching recipe in joins.join_catalog
+                Match the user's intent to a recipe's intent_triggers list.
+                Follow that recipe's steps exactly.
+
+       STEP 3 - Deduplicate before secondary calls
+                Extract join_key values from all primary results.
+                Deduplicate. Call secondary tool ONCE per unique value.
+                Never exceed the recipe's max_secondary cap (default 20).
+
+       STEP 4 - Merge and present as one unified response
+                Never show raw tool outputs separately.
+
+       QUICK RECIPE LOOKUP:
+         Work orders + asset status/details   -> joins.join_catalog.workorders_with_asset_details
+         Assets + their work orders           -> joins.join_catalog.assets_with_work_orders
+         Technicians + workload               -> joins.join_catalog.technicians_with_work_orders
+         Work orders + technician profile     -> joins.join_catalog.workorders_with_technician_profile
+         PM records + asset condition         -> joins.join_catalog.pm_with_asset_details
+         Looks like a join but is not         -> joins.join_catalog.no_join_required
+
+    4. EXTRACT filters from natural language
        - Use the field definitions and synonyms below to map user words to correct values
        - Date keywords: today, this week, last month -> convert to date range
        - If a filter is not mentioned: do not pass it, let the tool return all
 
-    4. HANDLE results
-       - If results found: present clearly as a list or table with key fields
-       - Always mention the total count
-       - If no results: inform the user and suggest relaxing the filters
+    5. HANDLE results
+       - Always read totalCount from the tool response before composing your reply
+       - Always open your reply by stating the count:
+         e.g. "Amit Sumit has 183 work orders in total. Here are the most recent 50:"
+       - Always present the MERGED/ENRICHED result as a single unified response
+       - Never show raw tool outputs separately (e.g. "Here are work orders. Here are assets.")
+       - If totalCount is 0: say "No work orders found matching the criteria" and suggest relaxing filters
        - If error: explain what went wrong and ask user to clarify
 
-    5. HANDLE ambiguity
+    6. HANDLE ambiguity
        - If the query is unclear: ask one clarifying question
        - If multiple entities could match: ask user to confirm
 
+    ─────────────────────────────────────────
+    RESPONSE FORMAT RULES
+    ─────────────────────────────────────────
+    For every response involving work orders:
+
+    ✅ ALWAYS start with the count:
+       "[Name] has [totalCount] work orders."
+       "Found [totalCount] work orders matching your filters."
+
+    ✅ ALWAYS distinguish total vs shown:
+       If totalCount > data.length → say "Showing [data.length] of [totalCount]"
+
+    ✅ For count-only queries:
+       Just state the number. Do not list records unless asked.
+
+    ❌ NEVER say things like:
+       "Here are the work orders:" without mentioning the count
+       "I found some work orders" without a specific number
+       Any filler message that omits totalCount
+
+    ─────────────────────────────────────────
+    EXAMPLE QUERY RESOLUTIONS
+    ─────────────────────────────────────────
+
+    "How many work orders does Amit Sumit have?"
+    → get_users → resolve "Amit Sumit" to ObjectId
+    → get_work_orders(people=<id>)
+    → Reply: "Amit Sumit has [totalCount] work orders."
+
+    "Show open work orders with the asset status for each"
+    → get_work_orders(status="Open")  [has assetName already]
+    → Deduplicate asset names → get_assets(name=X) for each unique asset
+    → Merge assetStatus into each work order → present unified table
+    → Open reply with: "Found [totalCount] open work orders. Showing [data.length]:"
+
+    "Which assets under maintenance have critical work orders?"
+    → get_assets(status="Maintenance")
+    → For each asset → get_work_orders(asset_name=X, priority="Critical")
+    → Return only assets where work order results are non-empty
+
+    "List busy technicians and their open work order count"
+    → get_users(role="technician", status="busy")
+    → For each technician → get_work_orders(technician_name=X, status="Open")
+    → Read totalCount per technician → present summary table with counts
+
+    "Show high priority work orders and who is assigned"
+    → get_work_orders(priority="High")  [already has technicians list]
+    → No secondary call needed
+    → Reply: "Found [totalCount] high priority work orders. Showing [data.length]:"
 
   workorder_retrieval:
     description: Retrieve work orders from the workorders collection
@@ -246,10 +358,22 @@ retrieval_operations:
             }
           },
           {
-            "$sort": { "createdAt": -1 }
+            "$facet": {
+              "data": [
+                { "$sort": { "createdAt": -1 } },
+                { "$limit": "{{limit}}" }
+              ],
+              "totalCount": [
+                { "$count": "count" }
+              ]
+            }
           },
           {
-            "$limit": "{{limit}}"
+            "$project": {
+              "data": 1,
+              "totalCount": { 
+                "$ifNull": [{"$arrayElemAt": ["$totalCount.count", 0]}, 0]}
+            }
           }
         ]
 
@@ -516,7 +640,7 @@ retrieval_operations:
             inject_when: warranty keyword detected
             operators: [$gte, $lte]
 
-   users_retrieval:
+  users_retrieval:
     description: Retrieve users (technicians, admins, managers) from the users collection
     collection: users
  
@@ -777,3 +901,303 @@ retrieval_operations:
             inject_when: creation date keyword detected
             operators: [$gte, $lte]
  
+  preventive_maintenance_retrieval:
+    description: Retrieve preventive maintenance records from the preventiveMaintenance collection
+    collection: preventivemaintenances
+
+    fields:
+      _id: { type: ObjectId }
+
+      preventiveMaintenanceId:
+        type: String
+        description: Unique PM identifier (e.g. PM-3). Used for queries like "show PM-3".
+
+      name:
+        type: String
+        description: Name of the PM record (e.g. PM 2).
+
+      description: { type: String }
+
+      assetAllocation:
+        type: ObjectId
+        references: assets._id
+        description: >
+          The asset this PM is allocated to.
+          Resolve asset name to ObjectId before filtering.
+
+      plantId:
+        type: ObjectId
+        references: plants._id
+
+      shiftId:
+        type: ObjectId
+        references: shifts._id
+
+      companyId:
+        type: ObjectId
+        references: companies._id
+
+      createdBy:
+        type: ObjectId
+        references: users._id
+
+      lastModifiedBy:
+        type: ObjectId
+        references: users._id
+
+      selectWorkOrder:
+        type: Object
+        description: Work order configuration linked to this PM.
+
+      schedule:
+        type: Object
+        description: >
+          Scheduling configuration for the PM.
+          Used for queries like "weekly PM", "monthly maintenance schedule".
+
+      trigger:
+        type: Object
+        description: >
+          Trigger configuration for when PM is activated.
+
+      nextGenerationDate:
+        type: Date
+        description: >
+          When the next PM work order will be generated.
+          Used for queries like "PM due soon", "next maintenance date",
+          "PM scheduled this week".
+
+      lastMaintenanceDate:
+        type: Date
+        description: >
+          When the last maintenance was performed.
+          Used for queries like "recently maintained", "last serviced".
+
+      deleted:
+        type: Boolean
+        description: Always filter with deleted=false. Never return deleted records.
+
+      createdAt: { type: Date }
+      updatedAt: { type: Date }
+
+    filter_examples:
+      - user_says: "show all preventive maintenance"
+        filters: { deleted: false }
+
+      - user_says: "show PM for BFW BMV 1600"
+        filters: { assetAllocation: "<resolve asset ObjectId>", deleted: false }
+
+      - user_says: "PM due this week"
+        filters: { nextGenerationDate: { gte: start_of_week, lte: end_of_week }, deleted: false }
+
+      - user_says: "recently maintained assets"
+        filters: { lastMaintenanceDate: { gte: last_30_days }, deleted: false }
+
+      - user_says: "show PM-3"
+        filters: { preventiveMaintenanceId: "PM-3", deleted: false }
+
+    pipeline:
+      description: >
+        Base MongoDB aggregation pipeline for preventive maintenance retrieval.
+        The tool dynamically injects $match filters before executing.
+      stages: |
+        [
+          {
+            "$match": {
+              "deleted": false
+            }
+          },
+          {
+            "$lookup": {
+              "from": "assets",
+              "localField": "assetAllocation",
+              "foreignField": "_id",
+              "as": "assetDetails"
+            }
+          },
+          {
+            "$lookup": {
+              "from": "plants",
+              "localField": "plantId",
+              "foreignField": "_id",
+              "as": "plantDetails"
+            }
+          },
+          {
+            "$lookup": {
+              "from": "users",
+              "localField": "createdBy",
+              "foreignField": "_id",
+              "as": "createdByDetails"
+            }
+          },
+          {
+            "$project": {
+              "_id": 1,
+              "preventiveMaintenanceId": 1,
+              "name": 1,
+              "description": 1,
+              "schedule": 1,
+              "trigger": 1,
+              "nextGenerationDate": 1,
+              "lastMaintenanceDate": 1,
+              "createdAt": 1,
+              "updatedAt": 1,
+              "assetName": { "$arrayElemAt": ["$assetDetails.name", 0] },
+              "plantName": { "$arrayElemAt": ["$plantDetails.name", 0] },
+              "createdBy": {
+                "$arrayElemAt": [
+                  {
+                    "$map": {
+                      "input": "$createdByDetails",
+                      "as": "u",
+                      "in": { "$concat": ["$$u.firstName", " ", "$$u.lastName"] }
+                    }
+                  },
+                  0
+                ]
+              }
+            }
+          },
+          {
+            "$sort": { "createdAt": -1 }
+          },
+          {
+            "$limit": "{{limit}}"
+          },
+          {
+            "$facet": {
+              "data": [
+                { "$sort": { "createdAt": -1 } },
+                { "$limit": "{{limit}}" }
+              ],
+              "totalCount": [
+                { "$count": "count" }
+              ]
+            }
+          },
+          {
+            "$project": {
+              "data": 1,
+              "totalCount": {
+                "$ifNull": [{ "$arrayElemAt": ["$totalCount.count", 0] }, 0]
+              }
+            }
+          }
+        ]
+
+      dynamic_filters:
+        description: >
+          These filters are injected into the $match stage at runtime.
+          All are optional.
+        filters:
+          - field: preventiveMaintenanceId
+            type: String
+            inject_when: PM ID mentioned in query (e.g. PM-3)
+
+          - field: assetAllocation
+            type: ObjectId
+            inject_when: asset name mentioned in query
+            note: Resolve asset name to ObjectId via assets collection first
+
+          - field: nextGenerationDate
+            type: Date
+            inject_when: due date or scheduled date keyword detected
+            operators: [$gte, $lte]
+
+          - field: lastMaintenanceDate
+            type: Date
+            inject_when: last maintenance or recently serviced keyword detected
+            operators: [$gte, $lte]
+
+          - field: plantId
+            type: ObjectId
+            inject_when: plant name mentioned in query
+            note: Resolve plant name to ObjectId via plants collection first
+
+  # =============================================================================
+  # JOINS - Cross-collection relationships and join strategies
+  # =============================================================================
+
+  joins:
+
+    # What each tool already returns (no secondary call needed)
+    built_in_fields:
+      get_work_orders:
+        - assetName
+        - technicians (id and name)
+        - lastModifiedBy
+      get_assets:
+        - plantName
+        - createdBy
+      get_users:
+        - plantName
+        - createdBy
+      get_preventive_maintenance:
+        - assetName
+        - plantName
+        - createdBy
+
+    # Join recipes - when secondary calls are needed
+    recipes:
+
+      workorders_with_asset_details:
+        when: "user needs asset status/location/warranty beyond just asset name"
+        primary: get_work_orders
+        secondary: get_assets (join on assetName, max 20)
+        adds:
+          - assetStatus
+          - location
+          - typeOfAsset
+          - manufacturer
+          - warrantyExpiryDate
+
+      assets_with_work_orders:
+        when: "user wants assets and their work orders"
+        primary: get_assets
+        secondary: get_work_orders (join on name, max 20)
+        adds:
+          - workOrderId
+          - workStatus
+          - priority
+          - dueDate
+          - technicians
+
+      technicians_with_work_orders:
+        when: "user wants technician workload"
+        primary: get_users (role=technician)
+        secondary: get_work_orders (join on technician_name, max 20)
+        adds:
+          - workOrderId
+          - workStatus
+          - priority
+          - assetName
+          - dueDate
+
+      workorders_with_technician_profile:
+        when: "user needs technician email/dept/status beyond just name"
+        primary: get_work_orders
+        secondary: get_users (join on technicians name, max 20)
+        adds:
+          - email
+          - department
+          - phoneNumber
+          - status
+          - role
+
+      pm_with_asset_details:
+        when: "user needs asset condition alongside PM schedule"
+        primary: get_preventive_maintenance
+        secondary: get_assets (join on assetName, max 20)
+        adds:
+          - assetStatus
+          - location
+          - typeOfAsset
+          - warrantyExpiryDate
+
+    # Decision flow
+    rules:
+      - If query needs only one collection → use single tool
+      - If needed fields are in built_in_fields → use single tool
+      - Otherwise → pick matching recipe, deduplicate join keys, call secondary once per unique value
+        - Always merge results before responding

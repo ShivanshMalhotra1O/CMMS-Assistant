@@ -106,24 +106,28 @@ def get_work_orders(
         results = list(db["workorders"].aggregate(pipeline))
 
         if not results:
-            return {"message": "No work orders found matching the given filters."}
+            return {"data": [], "totalCount": 0}
 
-        # Serialize
-        for doc in results:
+        # ── Unwrap $facet output ──────────────────────────────
+        facet_result = results[0]
+        total_count  = facet_result.get("totalCount", 0)
+        work_orders  = facet_result.get("data", [])
+
+        if not work_orders:
+            return {"data": [], "totalCount": 0}
+
+        # ── Serialize ─────────────────────────────────────────
+        for doc in work_orders:
             doc["_id"] = str(doc["_id"])
-            if doc.get("dueDate"):
-                doc["dueDate"] = doc["dueDate"].isoformat()
-            if doc.get("createdAt"):
-                doc["createdAt"] = doc["createdAt"].isoformat()
-            if doc.get("updatedAt"):
-                doc["updatedAt"] = doc["updatedAt"].isoformat()
+            for date_field in ("dueDate", "createdAt", "updatedAt"):
+                if doc.get(date_field) and isinstance(doc[date_field], datetime):
+                    doc[date_field] = doc[date_field].isoformat()
             if doc.get("technicians"):
                 for t in doc["technicians"]:
                     if "id" in t:
                         t["id"] = str(t["id"])
 
-        return results
-
+        return {"data": work_orders, "totalCount": total_count}
 
 @tool
 def get_assets(
@@ -218,3 +222,192 @@ def get_assets(
                 doc["updatedAt"] = doc["updatedAt"].isoformat()
 
         return results
+
+@tool
+def get_users(
+    name: Optional[str] = None,
+    role: Optional[str] = None,
+    email: Optional[str] = None,
+    status: Optional[str] = None,
+    department: Optional[str] = None,
+    limit: int = 10
+    ) -> list:
+        """
+        Retrieve users from the database with optional filters.
+
+        Args:
+            name      : Filter by user name (first or last name). Optional.
+            role      : Filter by role. One of: admin, technician, owner, viewonly.
+            email     : Filter by email address. Optional.
+            status    : Filter by status. One of: available, busy.
+            department: Filter by department name. Optional.
+            limit     : Max number of results to return. Default 10.
+        """
+
+        match = {"deleted": False}
+
+        if name:
+            name_parts = name.strip().split(" ", 1)
+            if len(name_parts) == 2:
+                match["$or"] = [
+                    {"firstName": {"$regex": name_parts[0], "$options": "i"}, "lastName": {"$regex": name_parts[1], "$options": "i"}},
+                    {"firstName": {"$regex": name, "$options": "i"}},
+                    {"lastName": {"$regex": name, "$options": "i"}}
+                ]
+            else:
+                match["$or"] = [
+                    {"firstName": {"$regex": name, "$options": "i"}},
+                    {"lastName": {"$regex": name, "$options": "i"}}
+                ]
+
+        if role:
+            match["role"] = role
+
+        if email:
+            match["email"] = {"$regex": email, "$options": "i"}
+
+        if status:
+            match["status"] = status
+
+        if department:
+            match["department"] = {"$regex": department, "$options": "i"}
+
+        pipeline_text = registry['retrieval_operations']['users_retrieval']['pipeline']['stages']
+        pipeline_text = pipeline_text.replace('"{{limit}}"', str(limit))
+        pipeline = json.loads(pipeline_text)
+        pipeline[0]["$match"] = match
+
+        results = list(db["users"].aggregate(pipeline))
+
+        if not results:
+            return {"message": "No users found matching the given filters."}
+
+        for doc in results:
+            doc["_id"] = str(doc["_id"])
+            if doc.get("createdAt"):
+                doc["createdAt"] = doc["createdAt"].isoformat()
+            if doc.get("updatedAt"):
+                doc["updatedAt"] = doc["updatedAt"].isoformat()
+
+        return results
+
+
+@tool
+def get_preventive_maintenance(
+    pm_id: Optional[str] = None,
+    name: Optional[str] = None,
+    asset_name: Optional[str] = None,
+    created_by: Optional[str] = None,
+    next_due_before: Optional[str] = None,
+    next_due_after: Optional[str] = None,
+    last_maintained_before: Optional[str] = None,
+    last_maintained_after: Optional[str] = None,
+    created_before: Optional[str] = None,
+    created_after: Optional[str] = None,
+    limit: int = 10
+    ) -> dict:
+        """
+        Retrieve preventive maintenance records with optional filters.
+
+        Args:
+            pm_id                  : Filter by PM ID (e.g. 'PM-3'). Optional.
+            name                   : Filter by PM name (e.g. 'Weekly Inspection'). Optional.
+            asset_name             : Filter by associated asset name. Optional.
+            created_by             : Filter by the name of the user who created the PM. Optional.
+            next_due_before        : Filter PMs with next generation date before this date. Format: YYYY-MM-DD. Optional.
+            next_due_after         : Filter PMs with next generation date after this date. Format: YYYY-MM-DD. Optional.
+            last_maintained_before : Filter PMs last maintained before this date. Format: YYYY-MM-DD. Optional.
+            last_maintained_after  : Filter PMs last maintained after this date. Format: YYYY-MM-DD. Optional.
+            created_before         : Filter PMs created before this date. Format: YYYY-MM-DD. Optional.
+            created_after          : Filter PMs created after this date. Format: YYYY-MM-DD. Optional.
+            limit                  : Max number of results to return. Default 10.
+        """
+
+        match = {"deleted": False}
+
+        # Filter by PM ID
+        if pm_id:
+            match["preventiveMaintenanceId"] = pm_id
+
+        # Filter by PM name
+        if name:
+            match["name"] = {"$regex": name, "$options": "i"}
+
+        # Resolve asset name → ObjectId for assetAllocation
+        if asset_name:
+            asset = db["assets"].find_one({"name": asset_name, "deleted": False}, {"_id": 1})
+            if not asset:
+                return {"data": [], "totalCount": 0, "error": f"Asset '{asset_name}' not found."}
+            match["assetAllocation"] = asset["_id"]
+
+        # Resolve created_by name → ObjectId
+        if created_by:
+            name_parts = created_by.strip().split(" ", 1)
+            query = {"deleted": False}
+            if len(name_parts) == 2:
+                query["firstName"] = name_parts[0]
+                query["lastName"] = name_parts[1]
+            else:
+                query["$or"] = [
+                    {"firstName": name_parts[0]},
+                    {"lastName": name_parts[0]}
+                ]
+            user = db["users"].find_one(query, {"_id": 1})
+            if not user:
+                return {"data": [], "totalCount": 0, "error": f"User '{created_by}' not found."}
+            match["createdBy"] = user["_id"]
+
+        # nextGenerationDate filters
+        next_gen_filter = {}
+        if next_due_before:
+            next_gen_filter["$lt"] = datetime.strptime(next_due_before, "%Y-%m-%d")
+        if next_due_after:
+            next_gen_filter["$gt"] = datetime.strptime(next_due_after, "%Y-%m-%d")
+        if next_gen_filter:
+            match["nextGenerationDate"] = next_gen_filter
+
+        # lastMaintenanceDate filters
+        last_maintained_filter = {}
+        if last_maintained_before:
+            last_maintained_filter["$lt"] = datetime.strptime(last_maintained_before, "%Y-%m-%d")
+        if last_maintained_after:
+            last_maintained_filter["$gt"] = datetime.strptime(last_maintained_after, "%Y-%m-%d")
+        if last_maintained_filter:
+            match["lastMaintenanceDate"] = last_maintained_filter
+
+        # createdAt filters
+        created_filter = {}
+        if created_after:
+            created_filter["$gte"] = datetime.strptime(created_after, "%Y-%m-%d")
+        if created_before:
+            created_filter["$lte"] = datetime.strptime(created_before, "%Y-%m-%d")
+        if created_filter:
+            match["createdAt"] = created_filter
+
+        # Load pipeline from registry
+        pipeline_text = registry['retrieval_operations']['preventive_maintenance_retrieval']['pipeline']['stages']
+        pipeline_text = pipeline_text.replace('"{{limit}}"', str(limit))
+        pipeline = json.loads(pipeline_text)
+        pipeline[0]["$match"] = match
+
+        results = list(db["preventivemaintenances"].aggregate(pipeline))
+
+        if not results:
+            return {"data": [], "totalCount": 0}
+
+        # ── Unwrap $facet output ──────────────────────────────────────
+        facet_result = results[0]
+        total_count  = facet_result.get("totalCount", 0)
+        pm_records   = facet_result.get("data", [])
+
+        if not pm_records:
+            return {"data": [], "totalCount": 0}
+
+        # ── Serialize ─────────────────────────────────────────────────
+        for doc in pm_records:
+            doc["_id"] = str(doc["_id"])
+            for date_field in ("nextGenerationDate", "lastMaintenanceDate", "createdAt", "updatedAt"):
+                if doc.get(date_field) and isinstance(doc[date_field], datetime):
+                    doc[date_field] = doc[date_field].isoformat()
+
+        return {"data": pm_records, "totalCount": total_count}

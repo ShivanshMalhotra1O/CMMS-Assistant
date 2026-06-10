@@ -63,6 +63,12 @@ def clean_prompt(text: str) -> str:
     return re.sub(r'[^\x00-\x7F]+', '', text).strip()
 
 
+def sanitize_tool_name(raw_name: str) -> str:
+    """Strip any hallucinated suffixes from the tool name (e.g. 'get_work_orders<|channel|>commentary' -> 'get_work_orders')."""
+    match = re.match(r'^[a-zA-Z0-9_]+', raw_name or "")
+    return match.group(0) if match else raw_name
+
+
 def find_cached_response(user_input: str, current_session_id: str) -> dict | None:
     """Check if the exact same query was asked before in a different session."""
     results = messages_collection.get(
@@ -154,8 +160,20 @@ def stream_agent(system_prompt, tools, tool_map, user_input, session_id):
             break
 
         for tool_call in response.tool_calls:
-            tool_name = tool_call['name']
-            tool_args = tool_call['args']
+            raw_tool_name = tool_call['name']
+            tool_name     = sanitize_tool_name(raw_tool_name)
+            tool_args     = tool_call['args']
+
+            # Unknown tool — log, feed error back to LLM, and continue
+            if tool_name not in tool_map:
+                error_msg = f"Unknown tool '{raw_tool_name}'. Available tools: {list(tool_map.keys())}"
+                print(f"DEBUG: {error_msg}")
+                messages.append(ToolMessage(
+                    content=json.dumps({"error": error_msg}),
+                    tool_call_id=tool_call['id']
+                ))
+                yield f"data: {json.dumps({'type': 'tool_error', 'name': raw_tool_name, 'error': error_msg})}\n\n"
+                continue
 
             save_message(session_id, "tool_call", json.dumps(tool_args, default=str), {
                 "tool_name": tool_name
@@ -266,4 +284,4 @@ def health():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(api, host="127.0.0.1", port=5000)
+    uvicorn.run("app.agents.app:api", host="127.0.0.1", port=5000, reload=True)

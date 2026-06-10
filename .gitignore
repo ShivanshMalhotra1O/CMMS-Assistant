@@ -38,3 +38,6 @@ Thumbs.db
 *.sqlite3
 *.db
 .cache/
+
+.test_workspace/
+test_workspace/

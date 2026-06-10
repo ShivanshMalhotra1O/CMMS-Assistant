@@ -1,0 +1,13 @@
+.git
+.gitignore
+.env
+.env.*
+venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.log
+.DS_Store
+.idea/
+.vscode/
+chroma_store/
